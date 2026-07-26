@@ -1,0 +1,9 @@
+---
+- name: Reload sshd
+  ansible.builtin.systemd:
+    name: ssh
+    state: reloaded
+
+- name: Reload ufw
+  ansible.builtin.command: ufw reload
+  changed_when: true

@@ -1,0 +1,108 @@
+---
+# Join worker nodes to the cluster.
+
+- name: Check whether this node has already joined
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf
+
+# Cluster membership is queried directly rather than read from the control-plane
+# play's facts, so this role works when run with --tags workers.
+- name: Read current cluster membership
+  ansible.builtin.command: kubectl get nodes -o jsonpath='{.items[*].metadata.name}'
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  register: cluster_members
+  changed_when: false
+  check_mode: false
+
+# Previously this combination was invisible: the control-plane role skips minting
+# a token when every worker "has joined", and this role skips joining when
+# kubelet.conf exists — so a node with leftover state from a previous attempt
+# stayed permanently out of the cluster with the run reporting success.
+- name: Fail on stale kubeadm state
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} has /etc/kubernetes/kubelet.conf but is not
+      registered in the API server, so it is carrying stale state from an earlier
+      join. Clear it on that node, then re-run `make cluster`:
+        sudo kubeadm reset -f && sudo rm -rf /etc/cni/net.d
+  when:
+    - kubelet_conf.stat.exists
+    - inventory_hostname not in cluster_members.stdout.split()
+
+- name: Join the cluster
+  when: not kubelet_conf.stat.exists
+  block:
+    - name: The control-plane play must have produced a join command
+      ansible.builtin.assert:
+        that:
+          - hostvars[groups['control_plane'][0]].kubeadm_join_command is defined
+        fail_msg: >-
+          No join command available. Run the control_plane play first
+          (`make cluster`, or at least --tags control_plane) — running with
+          --tags workers alone cannot mint a bootstrap token.
+        quiet: true
+
+    # no_log because the token is on the command line. The rescue below still
+    # surfaces stderr, which does not echo it.
+    - name: Run kubeadm join
+      ansible.builtin.command: >
+        {{ hostvars[groups['control_plane'][0]].kubeadm_join_command }}
+        --node-name={{ inventory_hostname }}
+      register: join_result
+      changed_when: join_result.rc == 0
+      no_log: true
+
+  rescue:
+    - name: Show why the join failed
+      ansible.builtin.debug:
+        msg: "{{ join_result.stderr_lines | default(['no stderr captured']) }}"
+
+    - name: Fail with a pointer to the node-side logs
+      ansible.builtin.fail:
+        msg: >-
+          kubeadm join failed on {{ inventory_hostname }}. On that node run:
+            sudo journalctl -u kubelet -n 100 --no-pager
+          Common causes: {{ control_plane_endpoint }} not resolving (the base
+          role writes /etc/hosts), ufw blocking 6443, or an expired token.
+
+# kubeadm join returns once TLS bootstrap completes; the Node object appearing in
+# the API server is a slightly later event. Without this wait the label tasks
+# below can race it and fail with NotFound.
+- name: Wait for this node to register with the API server
+  ansible.builtin.command: kubectl get node {{ inventory_hostname }} -o name
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  register: node_registered
+  until: node_registered.rc == 0
+  retries: 30
+  delay: 5
+  changed_when: false
+  check_mode: false
+
+# No failed_when: false here. The node provably exists now, so a failure is a
+# real failure — previously an empty stdout meant either "not labelled yet" or
+# "node does not exist", and the two were indistinguishable.
+- name: Read the current worker label
+  ansible.builtin.command: >
+    kubectl get node {{ inventory_hostname }}
+    -o jsonpath='{.metadata.labels.node-role\.kubernetes\.io/worker}'
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  register: worker_label
+  changed_when: false
+  check_mode: false
+
+- name: Label this node as a worker
+  ansible.builtin.command: >
+    kubectl label node {{ inventory_hostname }}
+    node-role.kubernetes.io/worker=worker --overwrite
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  when: worker_label.stdout != "worker"
+  changed_when: true

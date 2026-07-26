@@ -1,0 +1,233 @@
+---
+# Everything a machine needs before kubeadm will work:
+# swap off, kernel networking, containerd, kube* packages (pinned).
+
+# --- Swap ------------------------------------------------------------------
+# The kubelet refuses to start with swap enabled (--fail-swap-on defaults true).
+- name: Disable swap now
+  ansible.builtin.command: swapoff -a
+  when: (ansible_swaptotal_mb | default(0)) > 0
+  changed_when: true
+
+# The options field is \S+ rather than literally "sw": Ubuntu's swap.img line
+# uses "sw", but an LVM swap volume can be written with "defaults". Missing it
+# means swapoff -a above hides the problem until the next reboot, at which point
+# the kubelet refuses to start.
+- name: Remove swap from fstab permanently
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#]\S*\s+\S+\s+swap\s+\S+\s+.*)$'
+    replace: '# \1'
+
+- name: Delete Ubuntu's swapfile if present
+  ansible.builtin.file:
+    path: /swap.img
+    state: absent
+
+# --- Kernel ----------------------------------------------------------------
+- name: Load required kernel modules at boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k8s.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      overlay
+      br_netfilter
+
+- name: Load modules now
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: [overlay, br_netfilter]
+
+- name: Apply Kubernetes sysctls
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-kubernetes.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.ip_forward                 = 1
+  notify: Reload sysctl
+
+- name: Flush handlers so sysctls apply before containerd starts
+  ansible.builtin.meta: flush_handlers
+
+# --- package holds ---------------------------------------------------------
+# Unhold BEFORE any install below, otherwise a deliberate version bump in
+# group_vars is silently ignored: apt cannot move a held package. The holds are
+# re-applied at the end of this role.
+#
+# Conditional on the current state so a converged run reports no change — the
+# hold/unhold pair used to churn 7 changes per node every single run, which
+# buried the changes that actually mattered.
+- name: Read current package hold state
+  ansible.builtin.command: apt-mark showhold
+  register: apt_holds
+  changed_when: false
+
+- name: Unhold managed packages so deliberate version changes can apply
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: install
+  loop: "{{ managed_held_packages }}"
+  when: item in apt_holds.stdout_lines
+
+# --- containerd ------------------------------------------------------------
+# Installed from Docker's repo, which carries a current containerd.
+- name: Create apt keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Add Docker GPG key (for containerd.io)
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    checksum: "sha256:{{ docker_key_sha256 }}"
+
+- name: Add Docker apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ 'amd64' if ansible_architecture == 'x86_64' else ansible_architecture }}
+      signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+    filename: docker
+    state: present
+
+# Pinned, not `state: present`. Unpinned + held meant the version depended on
+# the date of the node's first run, so nodes provisioned weeks apart would drift.
+- name: Install containerd at the pinned version
+  ansible.builtin.apt:
+    name: "containerd.io={{ containerd_apt_version }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    allow_downgrade: true
+
+- name: Ensure containerd config directory exists
+  ansible.builtin.file:
+    path: /etc/containerd
+    state: directory
+    mode: "0755"
+
+# THE classic kubeadm gotcha: containerd ships with SystemdCgroup = false,
+# which makes the kubelet fail in a way that doesn't mention cgroups at all.
+- name: Check containerd cgroup driver config
+  ansible.builtin.command: grep -q 'SystemdCgroup = true' /etc/containerd/config.toml
+  register: cgroup_check
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+# check_mode: false because this is read-only and its stdout is templated into
+# the task below — without it, `--check` runs leave stdout undefined and error.
+- name: Generate default containerd config
+  ansible.builtin.command: containerd config default
+  register: containerd_default_config
+  when: cgroup_check.rc != 0
+  changed_when: false
+  check_mode: false
+
+- name: Write containerd config with the systemd cgroup driver
+  ansible.builtin.copy:
+    dest: /etc/containerd/config.toml
+    content: "{{ containerd_default_config.stdout | regex_replace('SystemdCgroup = false', 'SystemdCgroup = true') }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when: cgroup_check.rc != 0
+  notify: Restart containerd
+
+# The regex_replace above is a no-op if a future containerd renames the key, and
+# the resulting config would be silently wrong — which is exactly the failure the
+# comment above warns about: the kubelet dies without mentioning cgroups. Verify
+# rather than assume.
+- name: Confirm the systemd cgroup driver is actually configured
+  ansible.builtin.command: grep -c 'SystemdCgroup = true' /etc/containerd/config.toml
+  register: cgroup_verify
+  changed_when: false
+  failed_when: cgroup_verify.rc != 0
+  check_mode: false
+
+- name: Flush handlers so containerd restarts before it is enabled
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable containerd
+  ansible.builtin.systemd:
+    name: containerd
+    enabled: true
+    state: started
+
+# --- Kubernetes packages ---------------------------------------------------
+- name: Add Kubernetes GPG key
+  ansible.builtin.get_url:
+    url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_minor }}/deb/Release.key"
+    dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+    mode: "0644"
+    checksum: "sha256:{{ kubernetes_key_sha256 }}"
+
+- name: Add Kubernetes apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc]
+      https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_minor }}/deb/ /
+    filename: kubernetes
+    state: present
+
+- name: Install kubelet, kubeadm, kubectl at the pinned version
+  ansible.builtin.apt:
+    name:
+      - "kubelet={{ kubernetes_apt_version }}"
+      - "kubeadm={{ kubernetes_apt_version }}"
+      - "kubectl={{ kubernetes_apt_version }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    allow_downgrade: true
+
+# Hold everything so an unrelated `apt upgrade` — which the base role runs on
+# every site.yml run — can never move these. containerd is included because an
+# unintended upgrade resets SystemdCgroup. Conditional so a converged run is quiet.
+- name: Hold managed package versions
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: "{{ managed_held_packages }}"
+  when: item not in apt_holds.stdout_lines
+
+# --- kubelet ---------------------------------------------------------------
+# Pin the address the kubelet advertises. These machines have both WiFi and
+# Ethernet, so left to itself the kubelet may register an address that is not
+# the ansible_host everything else in this repo is built around — the ufw peer
+# rules and the /etc/hosts endpoint mapping both derive from ansible_host. The
+# mismatch presents as nodes flapping Ready/NotReady, indistinguishable from the
+# WiFi power-save problem the base role fixes.
+#
+# Must be in place BEFORE the node joins; changing it afterwards needs a kubelet
+# restart and the Node object to be updated.
+- name: Check whether this node has already joined a cluster
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_joined
+
+- name: Pin the kubelet's advertised node IP
+  ansible.builtin.copy:
+    dest: /etc/default/kubelet
+    owner: root
+    group: root
+    mode: "0644"
+    content: "KUBELET_EXTRA_ARGS=--node-ip={{ ansible_host }}\n"
+  notify: Restart kubelet
+
+- name: Enable kubelet
+  ansible.builtin.systemd:
+    name: kubelet
+    enabled: true
+  # Not started — it crash-loops until kubeadm init/join configures it.
+  # That is expected and harmless at this stage.

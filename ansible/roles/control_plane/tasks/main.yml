@@ -1,0 +1,147 @@
+---
+# kubeadm init + Calico CNI + kubeconfig distribution.
+
+- name: Check whether the cluster is already initialised
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: admin_conf
+
+# --control-plane-endpoint is the important flag: it puts a NAME (not this
+# node's IP) in the certificates, which is what allows extra control-plane
+# nodes to be added later without regenerating everything.
+#
+# --apiserver-advertise-address pins the API server to the address the rest of
+# this repo uses (ufw peer rules, the /etc/hosts endpoint mapping). These nodes
+# are multi-homed (WiFi + Ethernet), so leaving kubeadm to infer it can pick the
+# wrong interface. Baked into the cert — cannot be changed without a reset.
+#
+# --skip-token-print instead of no_log: the bootstrap token is the only secret in
+# this command's output, and the join command is regenerated further down anyway,
+# so removing the secret at the source beats hiding the whole result. no_log here
+# used to censor failures too, leaving the single most failure-prone task in the
+# repo with no diagnostics at all.
+- name: Initialise the control plane
+  ansible.builtin.command: >
+    kubeadm init
+    --control-plane-endpoint={{ control_plane_endpoint }}
+    --apiserver-advertise-address={{ ansible_host }}
+    --apiserver-cert-extra-sans={{ ansible_host }},{{ control_plane_endpoint }}
+    --pod-network-cidr={{ pod_cidr }}
+    --node-name={{ inventory_hostname }}
+    --skip-token-print
+  when: not admin_conf.stat.exists
+  register: kubeadm_init
+  changed_when: kubeadm_init.rc == 0
+
+# --- kubeconfig for the admin user on the node -----------------------------
+- name: Create .kube directory for {{ admin_user }}
+  ansible.builtin.file:
+    path: "/home/{{ admin_user }}/.kube"
+    state: directory
+    owner: "{{ admin_user }}"
+    group: "{{ admin_user }}"
+    mode: "0700"
+
+- name: Copy admin kubeconfig for {{ admin_user }}
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "/home/{{ admin_user }}/.kube/config"
+    remote_src: true
+    owner: "{{ admin_user }}"
+    group: "{{ admin_user }}"
+    mode: "0600"
+
+- name: Fetch kubeconfig to your laptop (./kubeconfig)
+  ansible.builtin.fetch:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ playbook_dir }}/kubeconfig"
+    flat: true
+
+- name: Restrict kubeconfig permissions on localhost
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/kubeconfig"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+
+# --- Calico CNI ------------------------------------------------------------
+# Nodes stay NotReady until a CNI is running — this is the step that fixes it.
+- name: Check whether Calico is already installed
+  ansible.builtin.command: kubectl -n kube-system get daemonset calico-node
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: calico_present
+  failed_when: false
+  changed_when: false
+
+- name: Install Calico
+  when: calico_present.rc != 0
+  block:
+    - name: Download the Calico manifest
+      ansible.builtin.get_url:
+        url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml"
+        dest: /root/calico.yaml
+        mode: "0600"
+        checksum: "sha256:{{ calico_manifest_sha256 }}"
+
+    # Calico defaults to 192.168.0.0/16, which commonly collides with home
+    # LANs, so we point it at our pod_cidr instead. These two edits uncomment
+    # the CALICO_IPV4POOL_CIDR env var.
+    - name: Uncomment the pod CIDR env var
+      ansible.builtin.replace:
+        path: /root/calico.yaml
+        regexp: '^(\s*)#\s*(- name: CALICO_IPV4POOL_CIDR)\s*$'
+        replace: '\1\2'
+
+    - name: Set the pod CIDR to match kubeadm
+      ansible.builtin.replace:
+        path: /root/calico.yaml
+        regexp: '^(\s*)#\s*value:\s*"192\.168\.0\.0/16"\s*$'
+        replace: '\1  value: "{{ pod_cidr }}"'
+
+    - name: Confirm the CIDR was patched
+      ansible.builtin.command: grep -A1 'CALICO_IPV4POOL_CIDR' /root/calico.yaml
+      register: cidr_check
+      changed_when: false
+      failed_when: pod_cidr not in cidr_check.stdout
+
+    - name: Apply Calico
+      ansible.builtin.command: kubectl apply -f /root/calico.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      changed_when: true
+
+    - name: Remove downloaded manifest
+      ansible.builtin.file:
+        path: /root/calico.yaml
+        state: absent
+
+- name: Wait for this node to become Ready
+  ansible.builtin.command: >
+    kubectl wait --for=condition=Ready node/{{ inventory_hostname }} --timeout=300s
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
+
+# --- Join command for the workers -----------------------------------------
+- name: Check which nodes have already joined
+  ansible.builtin.command: kubectl get nodes -o jsonpath='{.items[*].metadata.name}'
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: joined_nodes
+  changed_when: false
+
+# no_log stays here: this command's entire output IS the secret. changed_when
+# reflects reality — it mints server-side state (a token with a 24h TTL).
+- name: Generate a worker join command
+  ansible.builtin.command: kubeadm token create --print-join-command
+  register: join_command_raw
+  changed_when: join_command_raw.rc == 0
+  no_log: true
+  when: groups['workers'] | difference(joined_nodes.stdout.split()) | length > 0
+
+- name: Publish the join command as a fact
+  ansible.builtin.set_fact:
+    kubeadm_join_command: "{{ join_command_raw.stdout }}"
+  no_log: true
+  when: join_command_raw is not skipped

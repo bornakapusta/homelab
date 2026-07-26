@@ -1,0 +1,8 @@
+---
+# Defaults for the hardening role. No values on purpose — a plausible-looking
+# default for any of these would silently harden the wrong thing. The preflight
+# role asserts they are set. All come from group_vars/all.yml:
+#
+# ssh_allowed_users: (required) sshd AllowUsers — must include the connecting user
+# node_ips: (required) peer addresses trusted wholesale by ufw
+# ssh_allowed_from: (required) source networks for SSH and for ingress 80/443

@@ -1,0 +1,99 @@
+---
+# ===========================================================================
+# EDIT THIS FILE FIRST. Everything else reads from here.
+#
+# This file holds USER-FACING variables. Role-internal lists (e.g. which base
+# packages to install) live in the relevant roles/<role>/defaults/main.yml.
+# ===========================================================================
+
+# --- identity / locale -----------------------------------------------------
+admin_user: borna                 # your sudo user on the nodes (break-glass login)
+timezone: Europe/Zagreb           # change to yours
+
+# Dedicated automation account. Created by the automation_user role; it exists
+# so that key rotation and audit trails are separate from your human login.
+# It is NOT less privileged than admin_user — Ansible needs root either way.
+ansible_service_user: ansible
+
+# Public half of the automation keypair, on THIS laptop. Generate with:
+#   ssh-keygen -t ed25519 -f ~/.ssh/homelab_ansible -C "ansible@homelab"
+ansible_service_pubkey: ~/.ssh/homelab_ansible.pub
+
+# Users sshd will accept. Both must be listed BEFORE ansible_user is switched
+# to the automation account, or the next run locks you out of every node.
+ssh_allowed_users:
+  - "{{ admin_user }}"
+  - "{{ ansible_service_user }}"
+
+# Who Ansible connects as.
+#
+# ROLLOUT — do these in order, verifying each step (see todos/001-*.md):
+#   1. ssh-keygen (command above), so ansible_service_pubkey exists
+#   2. `make nodes` as admin_user — creates the automation user, allows both in sshd
+#   3. verify by hand:  ssh -i ~/.ssh/homelab_ansible ansible@node-1 sudo -n true
+#   4. ONLY THEN swap the two lines below and re-run `make ping`
+ansible_user: "{{ admin_user }}"
+# ansible_user: "{{ ansible_service_user }}"
+# ansible_ssh_private_key_file: ~/.ssh/homelab_ansible
+
+# --- networking ------------------------------------------------------------
+# Derived from inventory ansible_host values — single source of truth.
+# Kubernetes needs many ports open between nodes; trusting the peers wholesale
+# is simpler and safer than hand-punching each port.
+#
+# These addresses are also what kubeadm and the kubelet advertise (see the
+# --apiserver-advertise-address and --node-ip wiring), so they must be the
+# addresses the nodes actually reach each other on. Set DHCP reservations.
+node_ips: "{{ groups['k8s_cluster'] | map('extract', hostvars, 'ansible_host') | list }}"
+
+# Where SSH is allowed from (your LAN, and later your tailnet 100.64.0.0/10).
+# Also used for the ingress 80/443 rules and to scope the automation key's
+# from= restriction.
+ssh_allowed_from:
+  - 192.168.178.0/24
+  # - 100.64.0.0/10
+
+# MUST be a DNS name that resolves to the control-plane node. The nodes get an
+# /etc/hosts entry automatically (base role); YOUR LAPTOP DOES NOT — run
+# `make hosts` for the line to add, or `make status` will fail to resolve it.
+# Using a NAME rather than an IP is what lets you add control-plane nodes
+# later without regenerating certificates. Do not skip this.
+control_plane_endpoint: k8s.lab.example
+
+# Pod network. Must NOT overlap your home LAN (192.168.178.0/24).
+# Calico's default is 192.168.0.0/16, which WOULD collide with this LAN —
+# so we use 10.244.0.0/16 and patch Calico to match. Do not change this
+# to 192.168.x. The preflight role asserts this.
+pod_cidr: "10.244.0.0/16"
+
+# --- versions --------------------------------------------------------------
+# CHECK THESE BEFORE YOUR FIRST RUN — verified against upstream 2026-07-26.
+#   Kubernetes: https://kubernetes.io/releases/
+#   Calico:     https://github.com/projectcalico/calico/releases
+#   containerd: https://download.docker.com/linux/ubuntu/dists/noble/stable/binary-amd64/Packages
+#
+# Each artefact digest sits next to the version it belongs to. Regenerate a
+# digest whenever you bump its version:
+#   curl -fsSL <url> | sha256sum
+kubernetes_minor: "1.36"                # used for the apt repo URL
+kubernetes_apt_version: "1.36.3-1.1"    # exact pinned package version
+# sha256 of https://pkgs.k8s.io/core:/stable:/v<minor>/deb/Release.key
+# NOTE: this key is identical across minor versions (verified v1.34/1.35/1.36),
+# so bumping kubernetes_minor does NOT require regenerating this digest.
+kubernetes_key_sha256: "7627818cf7bae52f9008c93e8b1f961f53dea11d40891778de216fb1b43be54d"
+
+# containerd comes from Docker's repo. Pinned and held: an unintended upgrade
+# resets SystemdCgroup and breaks the kubelet without mentioning cgroups.
+containerd_apt_version: "2.2.6-1~ubuntu.24.04~noble"
+# sha256 of https://download.docker.com/linux/ubuntu/gpg
+# This is a rotating aggregate keyring — if it changes legitimately this digest
+# must be regenerated AND cross-checked against Docker's install docs.
+docker_key_sha256: "1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570"
+
+calico_version: "v3.30.0"
+# sha256 of https://raw.githubusercontent.com/projectcalico/calico/<ver>/manifests/calico.yaml
+# Git tags are mutable, so this digest is what makes the CNI install reproducible.
+calico_manifest_sha256: "cfa6f94645138e0a7e567ffb819ac8d1066734b6873c3e2a8f224b7cc812b248"
+
+# base_packages moved to roles/base/defaults/main.yml — it is a property of the
+# base role, not a site setting. Override it here only if you need extras.

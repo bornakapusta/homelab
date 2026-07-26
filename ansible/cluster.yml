@@ -1,0 +1,48 @@
+---
+# ===========================================================================
+# cluster.yml — bootstrap the kubeadm cluster.
+#
+#   ansible-playbook cluster.yml
+#
+# Run AFTER site.yml. Safe to re-run: it detects an existing cluster and
+# skips init/join rather than breaking things.
+#
+# To start completely over:
+#   on each node:  sudo kubeadm reset -f && sudo rm -rf /etc/cni/net.d
+# ===========================================================================
+
+- name: Initialise the control plane
+  hosts: control_plane
+  become: true
+  any_errors_fatal: true
+  roles:
+    # control_plane_endpoint and pod_cidr are written into the apiserver
+    # certificate and the CNI config here and cannot be changed afterwards
+    # without a full reset. Assert them before that happens.
+    - role: preflight
+      tags: [always, preflight]
+
+    - role: control_plane
+      tags: [control_plane, init]
+
+- name: Join the workers
+  hosts: workers
+  become: true
+  roles:
+    - role: worker
+      tags: [workers, join]
+
+- name: Report cluster state
+  hosts: control_plane
+  become: true
+  tasks:
+    - name: Get nodes
+      ansible.builtin.command: kubectl get nodes -o wide
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: node_list
+      changed_when: false
+
+    - name: Show cluster nodes
+      ansible.builtin.debug:
+        msg: "{{ node_list.stdout_lines }}"

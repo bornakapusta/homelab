@@ -1,0 +1,19 @@
+---
+- name: Reload sysctl
+  ansible.builtin.command: sysctl --system
+  changed_when: true
+
+- name: Restart containerd
+  ansible.builtin.systemd:
+    name: containerd
+    state: restarted
+
+# Only meaningful once the node has joined. Before kubeadm init/join the kubelet
+# crash-loops by design, so `state: restarted` would fail the run for no reason —
+# and it is unnecessary, since the not-yet-started kubelet will read
+# /etc/default/kubelet when kubeadm starts it.
+- name: Restart kubelet
+  ansible.builtin.systemd:
+    name: kubelet
+    state: restarted
+  when: kubelet_joined.stat.exists | default(false)

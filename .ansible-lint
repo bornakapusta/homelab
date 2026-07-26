@@ -1,0 +1,17 @@
+---
+# Run via `make check` (alongside ansible-playbook --syntax-check).
+# The tree passes the strictest profile; keep it that way.
+profile: production
+
+exclude_paths:
+  - ansible/kubeconfig
+  - todos/
+  - docs/
+
+skip_list:
+  # Wants every registered variable prefixed with its role name
+  # (worker_kubelet_conf, kubernetes_node_cgroup_check, …). That guards against
+  # cross-role collisions in large collections; with 7 local roles and no actual
+  # collisions it costs readability for nothing. Revisit if these roles ever get
+  # reused outside this repo.
+  - var-naming[no-role-prefix]

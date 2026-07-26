@@ -1,0 +1,24 @@
+---
+# Defaults for the base role. Required vars come from group_vars/all.yml:
+# admin_user: (required)
+# timezone: (required)
+# control_plane_endpoint: (required)
+
+# THE authoritative base package list — group_vars/all.yml deliberately does not
+# duplicate it, because a duplicate there would silently win and edits here would
+# become no-ops. Override in group_vars/all.yml only to add site-specific extras.
+#
+# Not arbitrary — each entry has a consumer:
+#   chrony          clock sync; skew breaks etcd and TLS (enabled in tasks/main.yml)
+#   iw              the WiFi power-save-off unit shells out to /usr/sbin/iw
+#   ca-certificates, gnupg   apt keyrings added by the kubernetes_node role
+base_packages:
+  - curl
+  - vim
+  - git
+  - htop
+  - jq
+  - chrony
+  - ca-certificates
+  - gnupg
+  - iw

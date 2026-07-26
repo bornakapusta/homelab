@@ -1,0 +1,6 @@
+---
+# Defaults for the control_plane role. Override in group_vars/all.yml.
+# admin_user: (required)
+# control_plane_endpoint: (required)
+# pod_cidr: (required)
+# calico_version: (required)

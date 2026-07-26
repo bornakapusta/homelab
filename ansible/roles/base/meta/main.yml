@@ -1,0 +1,8 @@
+---
+# Baseline OS config - hostname, timezone, chrony, apt, WiFi stability, Tailscale
+#
+# No galaxy_info block: these roles are local to this repo and never published
+# to Galaxy, so the Galaxy metadata schema does not apply. The ansible-core
+# floor that used to live in min_ansible_version is asserted by the preflight
+# role instead, where it actually gets checked.
+dependencies: []

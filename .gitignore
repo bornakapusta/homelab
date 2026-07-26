@@ -1,0 +1,25 @@
+# kubeconfig fetched from the cluster — contains admin credentials
+kubeconfig
+*.kubeconfig
+
+# your real autoinstall file (contains a password hash + your SSH key)
+# (this pattern is anchored and does not match user-data.example, so no
+# re-inclusion rule is needed)
+autoinstall/user-data
+
+# ansible noise
+*.retry
+.vault_pass
+vault_pass.txt
+.ansible-lint-cache/
+.ansible/
+
+# never commit private keys — the automation keypair lives in ~/.ssh, but guard
+# against a stray copy landing here
+id_*
+*.pem
+!*.pub
+
+# editor / OS
+.DS_Store
+*.swp

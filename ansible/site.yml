@@ -1,0 +1,43 @@
+---
+# ===========================================================================
+# site.yml — bring every node to an identical, hardened, kubeadm-ready state.
+#
+#   ansible-playbook site.yml
+#
+# Idempotent: safe to run as often as you like. This is the playbook you
+# re-run whenever you change node-level config or add a node.
+#
+# NOTE: this also runs `apt upgrade`, so every run is a patch event. A kernel
+# upgrade leaves the node pending-reboot; the base role reports that at the end.
+# Drain before rebooting — one node at a time.
+# ===========================================================================
+
+- name: Configure all cluster nodes
+  hosts: k8s_cluster
+  become: true
+
+  # One node at a time. Without this, a bad sshd config, a containerd restart,
+  # or an apt upgrade lands on all three nodes simultaneously — which on a
+  # 3-node cluster with a single control plane is a total outage or a total
+  # lockout. serial + any_errors_fatal turns that into "node-1 broke, two
+  # known-good nodes remain".
+  serial: 1
+  any_errors_fatal: true
+
+  roles:
+    - role: preflight
+      tags: [always, preflight]
+
+    - role: base
+      tags: [base]
+
+    # Must precede hardening: the account has to exist and be in AllowUsers
+    # before sshd is reloaded.
+    - role: automation_user
+      tags: [automation_user, users]
+
+    - role: hardening
+      tags: [hardening]
+
+    - role: kubernetes_node
+      tags: [kubernetes]

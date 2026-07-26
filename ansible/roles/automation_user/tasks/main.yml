@@ -1,0 +1,71 @@
+---
+# Dedicated automation account, separate from the human admin login.
+#
+# What this buys you: an SSH key that rotates independently of your own login,
+# sudo/auth logs that distinguish "a playbook ran" from "Borna typed something",
+# and a key restricted by source address.
+#
+# What it does NOT buy you: reduced privilege. Ansible executes arbitrary Python
+# modules as root, so the automation user needs NOPASSWD:ALL just as admin_user
+# does. Do not mistake this role for privilege separation.
+#
+# This role MUST run before the hardening role, so the account exists and is
+# listed in sshd's AllowUsers before sshd is reloaded.
+
+- name: Locate the automation public key on the controller
+  ansible.builtin.stat:
+    path: "{{ ansible_service_pubkey | expanduser }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: automation_pubkey
+  changed_when: false
+
+- name: The automation public key must exist before we can install it
+  ansible.builtin.assert:
+    that:
+      - automation_pubkey.stat.exists
+    fail_msg: >-
+      No automation public key at {{ ansible_service_pubkey }}.
+      Generate one on this laptop, then re-run:
+        ssh-keygen -t ed25519 -f {{ ansible_service_pubkey | expanduser | regex_replace('\.pub$', '') }} -C "ansible@homelab"
+      Keep it separate from your personal key — independent rotation is the
+      whole point. See todos/001-pending-p1-dedicated-ansible-user.md.
+    quiet: true
+  run_once: true
+
+- name: Create the automation user
+  ansible.builtin.user:
+    name: "{{ ansible_service_user }}"
+    # A real shell, not nologin: the sudo become plugin and SSH pipelining
+    # (see ansible.cfg) both need one.
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Lock the automation user's password
+  ansible.builtin.user:
+    name: "{{ ansible_service_user }}"
+    password_lock: true
+  # Key-only, always. sshd already sets PasswordAuthentication no, but a locked
+  # password means console and su access are closed too.
+
+- name: Install the automation public key
+  ansible.posix.authorized_key:
+    user: "{{ ansible_service_user }}"
+    key: "{{ lookup('file', ansible_service_pubkey | expanduser) }}"
+    key_options: "{{ automation_key_options }}"
+    # Exactly one key may authenticate this account — a stale key left behind
+    # here would be an unnoticed way in.
+    exclusive: true
+
+# validate: is what stops a malformed file from making sudo unusable on every
+# node at once. Never write to /etc/sudoers.d without it.
+- name: Grant passwordless sudo to the automation user
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/90-{{ ansible_service_user }}"
+    owner: root
+    group: root
+    mode: "0440"
+    content: "{{ ansible_service_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    validate: visudo -cf %s

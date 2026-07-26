@@ -1,0 +1,2 @@
+---
+# No handlers — daemon_reload is done inline on the systemd task.

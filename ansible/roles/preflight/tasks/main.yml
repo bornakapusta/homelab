@@ -1,0 +1,132 @@
+---
+# Fail fast, on the controller, before anything on a node is touched.
+# Several of these values are baked into TLS certificates by `kubeadm init`
+# and cannot be changed afterwards without `kubeadm reset` on every node.
+
+- name: Controller ansible-core must meet the floor declared in roles/*/meta
+  ansible.builtin.assert:
+    that:
+      - ansible_version.full is version('2.14', '>=')
+    fail_msg: >-
+      ansible-core {{ ansible_version.full }} is older than the 2.14 floor
+      declared in roles/*/meta/main.yml.
+    quiet: true
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Required variables must be set
+  ansible.builtin.assert:
+    that:
+      - admin_user is defined and admin_user | length > 0
+      - ansible_service_user is defined and ansible_service_user | length > 0
+      - timezone is defined and timezone | length > 0
+      - control_plane_endpoint is defined and control_plane_endpoint | length > 0
+      - pod_cidr is defined and pod_cidr | length > 0
+      - kubernetes_minor is defined and kubernetes_minor | length > 0
+      - kubernetes_apt_version is defined and kubernetes_apt_version | length > 0
+      - containerd_apt_version is defined and containerd_apt_version | length > 0
+      - calico_version is defined and calico_version | length > 0
+      - ssh_allowed_from | default([]) | length > 0
+      - ssh_allowed_users | default([]) | length > 0
+    fail_msg: A required variable in group_vars/all.yml is missing or empty.
+    quiet: true
+
+- name: Artefact digests must be pinned
+  ansible.builtin.assert:
+    that:
+      - kubernetes_key_sha256 | default('') | length == 64
+      - docker_key_sha256 | default('') | length == 64
+      - calico_manifest_sha256 | default('') | length == 64
+    fail_msg: >-
+      One of the sha256 digests in group_vars/all.yml is missing or malformed.
+      These authenticate two apt signing keys and the CNI manifest — do not
+      remove them. Regenerate with: curl -fsSL <url> | sha256sum
+    quiet: true
+
+- name: The automation user must be permitted by sshd
+  ansible.builtin.assert:
+    that:
+      - ansible_service_user in ssh_allowed_users
+      - admin_user in ssh_allowed_users
+    fail_msg: >-
+      ssh_allowed_users must contain BOTH admin_user and ansible_service_user.
+      Dropping either one locks that account out of every node on the next
+      sshd reload — including the one Ansible is currently connecting as.
+    quiet: true
+
+- name: The user Ansible connects as must be permitted by sshd
+  ansible.builtin.assert:
+    that:
+      - ansible_user in ssh_allowed_users
+    fail_msg: >-
+      ansible_user is '{{ ansible_user }}', which is not in ssh_allowed_users
+      ({{ ssh_allowed_users | join(', ') }}). This run would reload sshd with a
+      config that excludes the account it is connected as, locking you out.
+    quiet: true
+
+- name: Control-plane endpoint must be a DNS name, not an IP address
+  ansible.builtin.assert:
+    that:
+      - control_plane_endpoint is not match('^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+    fail_msg: >-
+      control_plane_endpoint must be a NAME so extra control-plane nodes can be
+      added later without regenerating certificates. It is baked into the
+      apiserver certificate by `kubeadm init` and cannot be changed afterwards.
+    quiet: true
+
+- name: Pinned kube package version must belong to the pinned minor
+  ansible.builtin.assert:
+    that:
+      - kubernetes_apt_version is match('^' ~ (kubernetes_minor | regex_escape) ~ '\.')
+    fail_msg: >-
+      kubernetes_apt_version ({{ kubernetes_apt_version }}) does not belong to
+      kubernetes_minor ({{ kubernetes_minor }}). Bump both together — the repo
+      URL comes from the minor and the package pin from the full version.
+    quiet: true
+
+# Full subnet-overlap maths would need the ansible.utils collection. This
+# catches the specific documented footgun: Calico's 192.168.0.0/16 default
+# against a 192.168.x home LAN. Widen it if your LAN is not 192.168.x.
+- name: Pod CIDR must not collide with a 192.168.x home LAN
+  ansible.builtin.assert:
+    that:
+      - pod_cidr is not match('^192\.168\.')
+    fail_msg: >-
+      pod_cidr is {{ pod_cidr }}, which overlaps a 192.168.x LAN. Pod networking
+      will fail in ways that look like random pod-to-pod timeouts. Use
+      10.244.0.0/16. This is baked in by `kubeadm init` — fix it now.
+    quiet: true
+
+# Checking `is defined` here would be a no-op: Ansible silently defaults
+# ansible_host to the inventory hostname, so it is ALWAYS defined. The real
+# requirement is that it is a literal IPv4 address — ufw `src` rules and the
+# kubelet's --node-ip cannot take a name.
+- name: Every inventory host must have an explicit IPv4 ansible_host
+  ansible.builtin.assert:
+    that:
+      # default() is required, not defensive padding: an unset ansible_host is
+      # undefined, so referencing it bare makes fail_msg itself blow up and the
+      # operator sees a Jinja traceback instead of the actual problem.
+      - (hostvars[item].ansible_host | default('', true) | string) is match('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')
+    fail_msg: >-
+      {{ item }} has ansible_host
+      '{{ hostvars[item].ansible_host | default('(not set)', true) }}',
+      which is not an IPv4 address. node_ips, the ufw peer rules, and the kubelet
+      --node-ip wiring all need a literal address — add ansible_host=<ip> for
+      {{ item }} in inventory.ini.
+    quiet: true
+  loop: "{{ groups['k8s_cluster'] }}"
+  run_once: true
+
+- name: There must be exactly one control-plane node in Stage A
+  ansible.builtin.assert:
+    that:
+      - groups['control_plane'] | default([]) | length == 1
+    fail_msg: >-
+      Stage A expects exactly one control-plane node, found
+      {{ groups['control_plane'] | default([]) | length }}. Never run a
+      two-node control plane — etcd loses quorum on a single failure. Moving to
+      three requires kube-vip first (see inventory.ini).
+    quiet: true
+  run_once: true

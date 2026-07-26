@@ -1,0 +1,149 @@
+---
+# Baseline OS config, identical on every node.
+
+- name: Set hostname to the inventory name
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Ensure hostname resolves locally
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s'
+    line: "127.0.1.1 {{ inventory_hostname }}"
+    state: present
+
+# regex_escape matters: the endpoint contains dots, which would otherwise be
+# regex wildcards and could match an unrelated line. The (^|\s)…(\s|$) anchors
+# match the name as a whole token, so an existing entry that carries aliases
+# ("<ip> k8s.lab.example k8s") is updated rather than duplicated.
+- name: Make the control-plane endpoint resolvable on every node
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '(^|\s){{ control_plane_endpoint | regex_escape }}(\s|$)'
+    line: "{{ hostvars[groups['control_plane'][0]].ansible_host }} {{ control_plane_endpoint }}"
+    state: present
+
+- name: Set timezone
+  community.general.timezone:
+    name: "{{ timezone }}"
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Upgrade installed packages
+  ansible.builtin.apt:
+    upgrade: safe
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ base_packages }}"
+    state: present
+
+# Clock skew breaks etcd and TLS certificates — non-negotiable for a cluster.
+- name: Enable time synchronisation
+  ansible.builtin.systemd:
+    name: chrony
+    enabled: true
+    state: started
+
+- name: Remove packages left behind by upgrades
+  ansible.builtin.apt:
+    autoremove: true
+
+# --- WiFi stability --------------------------------------------------------
+# Linux WiFi cards sleep between packets, which causes latency spikes and
+# brief dropouts. On a cluster that shows up as nodes flapping Ready/NotReady
+# and pods being evicted for no real reason. Harmless no-op on wired nodes.
+- name: Install unit to disable WiFi power saving
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/wifi-no-powersave.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Disable WiFi power saving (cluster stability)
+      After=network.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/bin/sh -c 'for d in /sys/class/net/wl*; do [ -e "$d" ] || continue; /usr/sbin/iw dev "$(basename "$d")" set power_save off || true; done'
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Enable WiFi power-save-off unit
+  ansible.builtin.systemd:
+    name: wifi-no-powersave.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# --- Tailscale VPN ----------------------------------------------------------
+# Install Tailscale so nodes are reachable from anywhere via 100.x.x.x.
+# Skipped entirely if tailscale_auth_key is not set.
+- name: Check if Tailscale is already installed
+  ansible.builtin.command: tailscale version
+  register: ts_installed
+  failed_when: false
+  changed_when: false
+
+- name: Install Tailscale
+  when: ts_installed.rc != 0 and tailscale_auth_key | default('') | length > 0
+  block:
+    - name: Download Tailscale install script
+      ansible.builtin.get_url:
+        url: https://tailscale.com/install.sh
+        dest: /tmp/tailscale-install.sh
+        mode: "0755"
+
+    - name: Run Tailscale install script
+      ansible.builtin.command: /tmp/tailscale-install.sh
+      changed_when: true
+
+- name: Enable tailscaled
+  ansible.builtin.systemd:
+    name: tailscaled
+    enabled: true
+    state: started
+  when: ts_installed.rc == 0 or tailscale_auth_key | default('') | length > 0
+
+- name: Check if already authenticated
+  ansible.builtin.command: tailscale status
+  register: ts_status
+  failed_when: false
+  changed_when: false
+  when: tailscale_auth_key | default('') | length > 0
+
+# no_log because the auth key is on the command line and Ansible echoes the
+# command it ran — without this the key lands in terminal scrollback.
+- name: Authenticate to tailnet
+  ansible.builtin.command: >
+    tailscale up
+    --authkey={{ tailscale_auth_key }}
+    --hostname={{ inventory_hostname }}
+  when: tailscale_auth_key | default('') | length > 0 and ts_status.rc | default(0) != 0
+  changed_when: true
+  no_log: true
+
+# --- reboot reporting ------------------------------------------------------
+# `apt upgrade` above can pull a kernel. Nothing here reboots: on a cluster you
+# drain first, by hand, one node at a time. Surface the pending work so it does
+# not sit unnoticed until an unrelated incident.
+- name: Check whether a reboot is pending
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: reboot_required
+
+- name: Report that this node needs a manual drain and reboot
+  ansible.builtin.debug:
+    msg:
+      - "{{ inventory_hostname }} needs a reboot (kernel or libc was upgraded)."
+      - "Drain:    kubectl drain {{ inventory_hostname }} --ignore-daemonsets --delete-emptydir-data"
+      - "Reboot:   ssh {{ inventory_hostname }} sudo reboot"
+      - "Return:   kubectl uncordon {{ inventory_hostname }}"
+      - "On the control-plane node this briefly takes the API server down."
+  when: reboot_required.stat.exists

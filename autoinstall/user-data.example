@@ -1,0 +1,80 @@
+#cloud-config
+# ---------------------------------------------------------------------------
+# Ubuntu Server autoinstall (cloud-init) — unattended install for nodes 2 & 3
+#
+# RECOMMENDED WORKFLOW — don't write the storage section by hand:
+#   1. Install node-1 INTERACTIVELY. On the storage screen choose
+#      "Custom storage layout" and build:
+#           1 GB    EFI system partition
+#           2 GB    /boot            (ext4)
+#           rest    LVM volume group:
+#                     lv_root   60 GB   ->  /      (ext4)
+#                     lv_var   150 GB   ->  /var   (ext4)
+#                     ~40 GB left UNALLOCATED (grow later where needed)
+#           NO SWAP
+#   2. After it boots, copy the installer's own config off node-1:
+#           sudo cp /var/log/installer/autoinstall-user-data /tmp/
+#           sudo chmod a+r /tmp/autoinstall-user-data
+#           scp node-1:/tmp/autoinstall-user-data ./autoinstall/user-data
+#   3. In that harvested file, change `hostname` per node and confirm the
+#      identity/ssh blocks below are present. That file is now your
+#      known-good, exact-layout autoinstall for nodes 2 and 3.
+#
+# HOW TO USE IT: put the file on a second USB (or an HTTP server) as
+#   /user-data  alongside an empty file named  /meta-data,  then at the
+#   Ubuntu boot menu edit the kernel args and append:
+#       autoinstall ds=nocloud;s=/cdrom/   (or ds=nocloud-net;s=http://IP/)
+#
+# The file below is a MINIMAL STARTING POINT. Its `storage` section uses the
+# simple whole-disk LVM preset, NOT the separate-/var layout we want — replace
+# that block with the harvested one from step 2.
+# ---------------------------------------------------------------------------
+autoinstall:
+  version: 1
+
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us            # change if you use a different layout (e.g. hr)
+
+  # --- identity -------------------------------------------------------------
+  identity:
+    hostname: node-2      # CHANGE PER NODE: node-1 / node-2 / node-3
+    username: borna       # must match admin_user in ansible/group_vars/all.yml
+    # Generate with:  mkpasswd --method=SHA-512 --rounds=4096
+    # (from the `whois` package).  This is a PLACEHOLDER — replace it.
+    password: "$6$REPLACE_ME_WITH_A_REAL_HASH"
+
+  # --- ssh ------------------------------------------------------------------
+  ssh:
+    install-server: true
+    allow-pw: false       # key-only from the very first boot
+    authorized-keys:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA_REPLACE_WITH_YOUR_PUBLIC_KEY you@laptop"
+
+  # --- storage --------------------------------------------------------------
+  # REPLACE THIS BLOCK with the `storage:` section from the harvested
+  # /var/log/installer/autoinstall-user-data (see header). This preset gives a
+  # single root LV with no separate /var, which we do NOT want long-term.
+  storage:
+    layout:
+      name: lvm
+    swap:
+      size: 0             # no swap — the kubelet refuses to start with it on
+
+  # --- packages -------------------------------------------------------------
+  packages:
+    - openssh-server
+    - python3             # required for Ansible
+    - chrony
+
+  # --- updates --------------------------------------------------------------
+  # Skip installer-time updates; Ansible handles patching afterwards.
+  updates: security
+  shutdown: reboot
+
+  late-commands:
+    # passwordless sudo for the admin user so Ansible runs unattended.
+    # Remove this line if you'd rather type a sudo password (then run
+    # ansible-playbook with --ask-become-pass).
+    - echo 'borna ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/90-borna
+    - chmod 440 /target/etc/sudoers.d/90-borna

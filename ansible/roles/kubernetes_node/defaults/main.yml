@@ -1,0 +1,17 @@
+---
+# Defaults for the kubernetes_node role. Required vars come from
+# group_vars/all.yml and are asserted by the preflight role:
+# kubernetes_minor: (required) e.g. "1.36" — used for the apt repo URL
+# kubernetes_apt_version: (required) e.g. "1.36.3-1.1"
+# kubernetes_key_sha256: (required) digest of the k8s apt signing key
+# containerd_apt_version: (required) e.g. "2.2.6-1~ubuntu.24.04~noble"
+# docker_key_sha256: (required) digest of the Docker apt signing key
+
+# Packages held back from `apt upgrade` so an unrelated patch run can never
+# break the cluster. One list, used by both the unhold (start of role) and the
+# hold (end of role) so the two can never drift out of sync.
+managed_held_packages:
+  - kubelet
+  - kubeadm
+  - kubectl
+  - containerd.io

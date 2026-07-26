@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homelab Agent-Cluster — Project Plan</title>
+<style>
+  :root{
+    --bg:#faf9f5; --fg:#2c2c2a; --dim:#5f5e5a; --soft:#e6e4db; --line:#d3d1c7;
+    --card:#ffffff; --accent:#534ab7; --accentbg:#eeedfe; --hot:#1d9e75; --warn:#d85a30;
+    --radius:14px; --maxw:1040px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#1b1b18; --fg:#ecebe6; --dim:#b4b2a9; --soft:#333330; --line:#444441;
+      --card:#242421; --accent:#afa9ec; --accentbg:#26215c; }
+  }
+  *{ box-sizing:border-box; }
+  html{ -webkit-text-size-adjust:100%; }
+  body{ margin:0; background:var(--bg); color:var(--fg);
+    font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap{ max-width:var(--maxw); margin:0 auto; padding:40px 24px 80px; }
+  header h1{ font-size:30px; margin:0 0 6px; letter-spacing:-.01em; }
+  .meta{ color:var(--dim); font-size:14px; margin-bottom:8px; }
+  .lead{ color:var(--fg); font-size:16.5px; }
+  h2{ font-size:22px; margin:44px 0 12px; padding-bottom:6px; border-bottom:2px solid var(--soft); }
+  h3{ font-size:16px; margin:22px 0 6px; color:var(--accent); }
+  p{ margin:10px 0; }
+  a{ color:var(--accent); }
+  code{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.9em;
+    background:var(--soft); padding:1px 5px; border-radius:6px; }
+  pre{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    padding:14px 16px; overflow:auto; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; }
+  .fig{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    padding:16px; margin:16px 0; }
+  .fig img{ width:100%; height:auto; display:block; }
+  .fig figcaption{ color:var(--dim); font-size:13px; margin-top:10px; text-align:center; }
+  table{ width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; }
+  th,td{ text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th{ color:var(--dim); font-weight:700; font-size:12.5px; text-transform:uppercase; letter-spacing:.03em; }
+  tr:last-child td{ border-bottom:none; }
+  ul{ margin:8px 0; padding-left:22px; }
+  li{ margin:5px 0; }
+  .cards{ display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; margin-top:14px; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:16px; }
+  .card h3{ margin-top:0; color:var(--fg); }
+  .card .goal{ color:var(--dim); font-size:13px; font-style:italic; margin:2px 0 10px; }
+  .card ul{ padding-left:18px; }
+  .card li{ font-size:14px; }
+  .done{ margin-top:10px; font-size:13px; color:var(--hot); font-weight:600; }
+  .pill{ display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px;
+    background:var(--accentbg); color:var(--accent); margin-left:6px; }
+  .note{ background:var(--accentbg); border:1px solid var(--accent); border-radius:var(--radius);
+    padding:12px 16px; margin:16px 0; font-size:14px; }
+  .toc{ font-size:14px; color:var(--dim); }
+  .toc a{ text-decoration:none; }
+  footer{ margin-top:50px; color:var(--dim); font-size:13px; border-top:1px solid var(--soft); padding-top:16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Homelab Agent-Cluster — Project Plan</h1>
+  <div class="meta">Owner: Borna · Last updated: July 18, 2026 · Linux comfort: 3/5</div>
+  <p class="lead">A 3-node Kubernetes homelab that hosts your own apps (GitOps) <strong>and</strong> runs AI coding agents in pre-warmed, disposable environments, all viewable through herdr.</p>
+</header>
+
+<p class="toc">On this page:
+  <a href="#arch">Architecture</a> ·
+  <a href="#goals">Goals</a> ·
+  <a href="#dod">Definition of done</a> ·
+  <a href="#decisions">Decisions</a> ·
+  <a href="#principles">Principles</a> ·
+  <a href="#plan">Build plan</a> ·
+  <a href="#repo">Repo</a> ·
+  <a href="#ops">Day-2 ops</a> ·
+  <a href="#risks">Risks</a> ·
+  <a href="#glossary">Glossary</a>
+</p>
+
+<!-- ============ ARCHITECTURE ============ -->
+<h2 id="arch">Architecture</h2>
+
+<h3>1 · Whole project — the full stack</h3>
+<p>Read bottom-up: <strong>hardware → OS → Kubernetes → platform services → workloads → access</strong>. Everything on the left rail is code in one git repo — cloud-init and Ansible build the OS/Kubernetes layers, Argo CD manages everything inside the cluster.</p>
+<figure class="fig">
+  <img src="whole-project-diagram.svg" alt="Layered architecture of the whole project from hardware up to access, driven by infrastructure-as-code.">
+  <figcaption>Whole-project architecture — the layered stack and the IaC that drives every layer.</figcaption>
+</figure>
+
+<h3>2 · How agents run — herdr + Agent Sandbox + warm pools</h3>
+<p>You issue a <strong>SandboxClaim</strong>, get a pre-booted pod instantly, and herdr <code>kubectl exec</code>s into it to run Claude Code or Codex — watching each agent go working → done. When finished, the pod is recycled and the pool refills. The <strong>warmups</strong> are the <code>SandboxWarmPool</code> keeping pods hot so there's no cold start.</p>
+<figure class="fig">
+  <img src="architecture-diagram.svg" alt="How herdr, Agent Sandbox and Kubernetes work together, plus the warm-pool boot lifecycle.">
+  <figcaption>Agent execution — how herdr, Agent Sandbox and Kubernetes fit together, and the warm-pool lifecycle.</figcaption>
+</figure>
+
+<!-- ============ GOALS ============ -->
+<h2 id="goals">Goals</h2>
+<ul>
+  <li><strong>Learn Kubernetes properly</strong> — the real, upstream way (kubeadm), not a black box.</li>
+  <li><strong>Run AI coding agents</strong> (Claude Code, Codex; PI later) in isolated, disposable pods, pre-warmed and preloaded with a project (example: a modern Ruby on Rails app).</li>
+  <li><strong>Host my own apps</strong> on the same cluster, managed by GitOps.</li>
+  <li><strong>Everything as code</strong> — nodes and cluster reproducible from a git repo; never configure a machine by hand 3×.</li>
+  <li><strong>Reachable &amp; observable</strong> — access from anywhere over Tailscale, apps by hostname over HTTPS, Grafana dashboards for health.</li>
+</ul>
+
+<!-- ============ DoD ============ -->
+<h2 id="dod">Definition of done</h2>
+<ul>
+  <li>Three identical Ubuntu nodes stood up from <strong>one</strong> autoinstall + Ansible run.</li>
+  <li>A working <strong>kubeadm</strong> cluster with CNI, storage, ingress, and a bare-metal load balancer.</li>
+  <li><strong>Argo CD</strong> syncing all cluster state from a git repo.</li>
+  <li>Apps reachable by <strong>hostname over HTTPS</strong> (internal DNS + cert-manager).</li>
+  <li><strong>Grafana</strong> showing live node/pod metrics; a test alert fires.</li>
+  <li>A <strong>rails-dev</strong> sandbox image; <strong>Agent Sandbox</strong> warm pool hands over a ready pod in ~ms.</li>
+  <li><strong>herdr</strong> driving 2 agents in 2 warm pods at once.</li>
+  <li>Cluster reachable from outside the house over <strong>Tailscale</strong>.</li>
+  <li>At least one <strong>hosted app</strong> deployed via GitOps in its own namespace.</li>
+  <li>An <strong>etcd snapshot</strong> taken and a restore rehearsed once.</li>
+</ul>
+
+<!-- ============ DECISIONS ============ -->
+<h2 id="decisions">Decisions at a glance</h2>
+<table>
+  <thead><tr><th>Layer</th><th>Decision</th><th>Why (short)</th></tr></thead>
+  <tbody>
+    <tr><td>Hardware</td><td>3× OptiPlex 7050 (i5-7500T, 16 GB, 256 GB)</td><td>Enough for a learning cluster; SSD is the limit</td></tr>
+    <tr><td>Node OS</td><td><strong>Ubuntu Server LTS 24.04</strong></td><td>5-yr support, no SELinux friction, most tutorials</td></tr>
+    <tr><td>Kubernetes</td><td><strong>kubeadm</strong> (upstream/vanilla)</td><td>Learn the real thing; start 1 CP + 2 workers → 3 CP + kube-vip</td></tr>
+    <tr><td>Runtime / CNI</td><td>containerd · Calico</td><td>Standard, beginner-friendly</td></tr>
+    <tr><td>Storage</td><td>local-path (→ Longhorn later)</td><td>Simple start; watch SSD space</td></tr>
+    <tr><td>Ingress / LB</td><td>ingress-nginx + <strong>MetalLB</strong></td><td>Bare-metal LoadBalancer + ingress</td></tr>
+    <tr><td>Hostname access</td><td>Local DNS (AdGuard/dnsmasq wildcard) → ingress IP; ExternalDNS + cert-manager; Tailscale Split DNS</td><td>Reach apps by name over HTTPS (the "internal CDN" ask — really DNS+ingress)</td></tr>
+    <tr><td>IaC</td><td>cloud-init/autoinstall → <strong>Ansible</strong> → <strong>Argo CD</strong></td><td>Identical installs, fleet config, GitOps</td></tr>
+    <tr><td>Secrets</td><td>kubectl Secrets → <strong>SOPS / Sealed Secrets</strong></td><td>Safe to keep in git</td></tr>
+    <tr><td>Topology</td><td><strong>One physical cluster</strong> (namespaces + taints + quotas + NetworkPolicies)</td><td>3 nodes can't afford a physical split; vCluster later if needed</td></tr>
+    <tr><td>Disposable envs</td><td><strong>Agent Sandbox</strong> (Template / WarmPool / Claim)</td><td>Pre-warmed, isolated agent pods</td></tr>
+    <tr><td>Agents / view</td><td>Claude Code + Codex (PI later) · <strong>herdr</strong></td><td>Baked into image; multi-agent dashboard</td></tr>
+    <tr><td>Monitoring</td><td><strong>kube-prometheus-stack</strong> (Grafana), retention capped</td><td>Standard; sized for small SSDs</td></tr>
+    <tr><td>Scheduling</td><td>requests + metrics-server + topology spread → Descheduler → Trimaran</td><td>Distribute by load (real-usage later)</td></tr>
+    <tr><td>Remote access</td><td><strong>Tailscale</strong> mesh</td><td>No bridge box needed</td></tr>
+    <tr><td>Decided out</td><td><strong>Talos migration — not doing it</strong></td><td>Stay on Ubuntu + kubeadm; git makes it reproducible anyway</td></tr>
+    <tr><td>Parked (optional)</td><td>Hetzner box, vCluster, Loki, Trimaran</td><td>Add only if a real need appears</td></tr>
+  </tbody>
+</table>
+
+<!-- ============ PRINCIPLES ============ -->
+<h2 id="principles">Guiding principles</h2>
+<ul>
+  <li><strong>Everything as code, in one git repo.</strong> If it's not in git, it doesn't exist.</li>
+  <li><strong>Learn first, automate second.</strong> Do a step by hand once, then capture it in Ansible/Argo.</li>
+  <li><strong>Climb the ladder.</strong> Single control-plane before HA; requests-based scheduling before load-aware; metrics before logs.</li>
+  <li><strong>One cluster, logical isolation.</strong> Namespaces, taints, quotas, NetworkPolicies — not more hardware.</li>
+  <li><strong>Security baseline is non-negotiable.</strong> Named sudo user, Ed25519 keys, locked-down SSH, default-deny firewall, encrypted secrets, drained reboots.</li>
+  <li><strong>Mind the SSD.</strong> 256 GB is the tightest resource — lean images, capped retention, <code>/var</code> on its own LVM volume.</li>
+  <li><strong>Contain the blast radius.</strong> <code>--dangerously-skip-permissions</code> only inside sandbox pods; spend caps on agent API keys.</li>
+</ul>
+
+<!-- ============ BUILD PLAN ============ -->
+<h2 id="plan">Build plan</h2>
+<p>Do phases in order; each ends in a working state. Full detail lives in <code>homelab-roadmap.md</code>.</p>
+<div class="cards">
+
+  <div class="card"><h3>Phase 0 — Prep</h3>
+    <div class="goal">Everything staged.</div>
+    <ul><li>Plan node names + static IPs</li><li>BIOS: USB boot, VT-x, AC-recovery on</li><li>Collect keys/accounts</li><li>Create git repo + cloud-init autoinstall</li></ul>
+    <div class="done">Done: autoinstall USB + empty repo ready</div></div>
+
+  <div class="card"><h3>Phase 1 — Base OS</h3>
+    <div class="goal">Three clean nodes.</div>
+    <ul><li>Unattended Ubuntu install on all three</li><li>Key-only SSH from laptop</li></ul>
+    <div class="done">Done: ssh to all nodes, no passwords</div></div>
+
+  <div class="card"><h3>Phase 1.5 — Ansible</h3>
+    <div class="goal">Never configure a node by hand.</div>
+    <ul><li>Inventory + <code>ansible all -m ping</code></li><li>Baseline + K8s prereqs playbooks</li><li>ansible-vault for secrets</li></ul>
+    <div class="done">Done: one playbook → identical, hardened nodes</div></div>
+
+  <div class="card"><h3>Phase 2 — kubeadm</h3>
+    <div class="goal">A real cluster.</div>
+    <ul><li>containerd, swap off, sysctls</li><li><code>kubeadm init</code> (1 CP) + join 2 workers</li><li>Calico CNI; k9s on laptop</li><li>Later: 3 CP + kube-vip (HA)</li></ul>
+    <div class="done">Done: all nodes Ready</div></div>
+
+  <div class="card"><h3>Phase 2.5 — Batteries</h3>
+    <div class="goal">What kubeadm omits.</div>
+    <ul><li>MetalLB, ingress-nginx</li><li>local-path storage</li></ul>
+    <div class="done">Done: app+PVC reachable via ingress</div></div>
+
+  <div class="card"><h3>Phase 2.75 — Hostname access</h3>
+    <div class="goal">Reach apps by name over HTTPS.</div>
+    <ul><li>Local DNS wildcard → ingress IP</li><li>cert-manager (TLS); ExternalDNS optional</li><li>Later: Tailscale Split DNS</li></ul>
+    <div class="done">Done: https://app.lab.example works</div></div>
+
+  <div class="card"><h3>Phase 3 — Hygiene</h3>
+    <div class="goal">Backups, GitOps, secrets.</div>
+    <ul><li>etcd snapshot + rehearse restore</li><li>Argo CD + app-of-apps repo</li><li>SOPS/Sealed Secrets; store API keys</li><li>Cert-renewal reminder (~1 yr)</li></ul>
+    <div class="done">Done: snapshot + Argo + encrypted secrets</div></div>
+
+  <div class="card"><h3>Phase 3.5 — Monitoring</h3>
+    <div class="goal">See the cluster.</div>
+    <ul><li>kube-prometheus-stack (retention capped)</li><li>metrics-server; <code>kubectl top</code></li></ul>
+    <div class="done">Done: Grafana live; test alert fires</div></div>
+
+  <div class="card"><h3>Phase 4 — Rails image</h3>
+    <div class="goal">"My project, ready."</div>
+    <ul><li>Dockerfile: Ruby+Node+git+agents</li><li>Push to registry (TLS+auth)</li><li>Test as a one-off pod</li></ul>
+    <div class="done">Done: Rails + agents run in the image</div></div>
+
+  <div class="card"><h3>Phase 5 — Agent Sandbox</h3>
+    <div class="goal">Pre-warmed envs.</div>
+    <ul><li>Install controller + CRDs</li><li>SandboxTemplate <code>rails-dev</code></li><li>SandboxWarmPool (N=2)</li><li>Test claim → hot pod → recycle</li></ul>
+    <div class="done">Done: claim yields a warm pod instantly</div></div>
+
+  <div class="card"><h3>Phase 6 — herdr</h3>
+    <div class="goal">The cockpit.</div>
+    <ul><li>Install herdr; one pane per agent</li><li>exec into sandbox pods; run claude/codex</li></ul>
+    <div class="done">Done: 2 agents in 2 pods, one view</div></div>
+
+  <div class="card"><h3>Phase 7 — Tailscale</h3>
+    <div class="goal">Reach it anywhere.</div>
+    <ul><li>Tailscale + subnet router (home node)</li><li>Keep pod traffic on native LAN</li></ul>
+    <div class="done">Done: drive cluster from outside home</div></div>
+
+  <div class="card"><h3>Ongoing / later</h3>
+    <div class="goal">After the base is solid.</div>
+    <ul><li>Hosted apps via GitOps</li><li>Descheduler → Trimaran (load-aware)</li><li>Loki (logs); Longhorn (if disks added)</li><li>HA control plane; vCluster</li></ul>
+    <div class="done">Optional futures</div></div>
+
+</div>
+
+<!-- ============ REPO ============ -->
+<h2 id="repo">Repository structure</h2>
+<pre>homelab/
+├─ autoinstall/        # cloud-init user-data (identical OS installs)
+├─ ansible/
+│  ├─ inventory.ini
+│  ├─ site.yml
+│  └─ roles/           # base, hardening, containerd, kubeadm, ...
+├─ clusters/
+│  └─ home/
+│     ├─ bootstrap/    # Argo CD install
+│     ├─ platform/     # MetalLB, ingress, cert-manager, DNS, monitoring, agent-sandbox
+│     └─ apps/         # your hosted apps
+├─ images/
+│  └─ rails-dev/       # Dockerfile for the sandbox
+└─ docs/               # these planning docs</pre>
+
+<!-- ============ OPS ============ -->
+<h2 id="ops">Day-2 operating guidelines</h2>
+<ul>
+  <li><strong>Node reboots/upgrades:</strong> always <code>kubectl drain</code> → reboot → <code>kubectl uncordon</code>. Never let all nodes auto-reboot together.</li>
+  <li><strong>Add a node:</strong> one line in Ansible inventory → re-run <code>site.yml</code> → <code>kubeadm join</code>.</li>
+  <li><strong>Backups:</strong> scheduled etcd snapshots; back up PVs that matter; rehearse a restore.</li>
+  <li><strong>Certs:</strong> renew kubeadm control-plane certs before the ~1-year expiry.</li>
+  <li><strong>Secrets:</strong> rotate API keys; keep spend caps on them.</li>
+  <li><strong>Capacity:</strong> watch Grafana for pressure and <code>df -h</code> for SSD; keep images/retention lean.</li>
+  <li><strong>Change flow:</strong> edit git → Argo CD syncs. Avoid manual <code>kubectl apply</code> for anything Argo manages.</li>
+</ul>
+
+<!-- ============ RISKS ============ -->
+<h2 id="risks">Risks &amp; mitigations</h2>
+<table>
+  <thead><tr><th>Risk</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td>SSD fills up (images, warm pool, metrics)</td><td><code>/var</code> on own LVM volume; lean images; cap retention; monitor <code>df -h</code>; add SSD if needed</td></tr>
+    <tr><td>kubeadm maintenance burden for a beginner</td><td>Start single-CP; automate with Ansible; k3s is a legit fallback</td></tr>
+    <tr><td>Agent Sandbox is young (API churn)</td><td>Fallback = plain Deployment of N dev pods as a manual warm pool</td></tr>
+    <tr><td>Runaway agent starves the cluster</td><td>Resource requests/limits + quotas; taint a node for agents</td></tr>
+    <tr><td>Secrets leak / token burn</td><td>SOPS/Sealed Secrets; spend caps; skip-permissions only inside pods</td></tr>
+    <tr><td>Losing HA on node failure</td><td>Move to 3-CP + kube-vip once comfortable; etcd snapshots</td></tr>
+    <tr><td>Learning overload</td><td>Follow the ladder; one phase at a time; each rung is usable</td></tr>
+  </tbody>
+</table>
+
+<!-- ============ GLOSSARY ============ -->
+<h2 id="glossary">Beginner glossary</h2>
+<table>
+  <tbody>
+    <tr><td><strong>Node</strong></td><td>One physical machine in the cluster.</td></tr>
+    <tr><td><strong>Pod</strong></td><td>Smallest deployable unit; one or more containers.</td></tr>
+    <tr><td><strong>Namespace</strong></td><td>Logical partition for grouping/limiting workloads.</td></tr>
+    <tr><td><strong>Deployment</strong></td><td>Keeps N identical pods running.</td></tr>
+    <tr><td><strong>Service / Ingress / LoadBalancer</strong></td><td>How traffic reaches pods (MetalLB gives real LAN IPs on bare metal).</td></tr>
+    <tr><td><strong>CNI</strong></td><td>The pod network plugin (Calico).</td></tr>
+    <tr><td><strong>etcd</strong></td><td>The cluster's database (quorum needs an odd number of control-plane nodes).</td></tr>
+    <tr><td><strong>requests / limits</strong></td><td>What a pod reserves vs its hard ceiling (the scheduler places by <em>requests</em>).</td></tr>
+    <tr><td><strong>taint / toleration</strong></td><td>Keep pods off a node unless they explicitly tolerate it.</td></tr>
+    <tr><td><strong>GitOps / Argo CD</strong></td><td>Cluster state lives in git; the controller makes reality match it.</td></tr>
+    <tr><td><strong>SandboxTemplate / WarmPool / Claim</strong></td><td>Agent Sandbox: env definition / pool of pre-booted pods / request for one.</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  Companion documents: <code>PROJECT-PLAN.md</code>, <code>linux-k8s-foundations.md</code>, <code>homelab-roadmap.md</code>,
+  <code>homelab-decision-doc.md</code>, plus the diagram files <code>whole-project-diagram.svg</code> and <code>architecture-diagram.svg</code>.
+  <br>Keep this HTML file in the same folder as the two SVGs so the diagrams render.
+</footer>
+
+</div>
+</body>
+</html>

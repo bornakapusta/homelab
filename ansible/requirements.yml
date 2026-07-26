@@ -1,0 +1,15 @@
+---
+# Install with:  make deps
+#           or:  ansible-galaxy collection install -r requirements.yml
+#
+# Pinned to major-version ranges so a breaking change upstream is a deliberate
+# bump rather than a surprise on the next install. Ranges resolved and verified
+# against ansible-core 2.21.2 on 2026-07-26.
+collections:
+  # timezone (base), ufw (hardening), modprobe (kubernetes_node)
+  - name: community.general
+    version: ">=13.0.0,<14.0.0"
+
+  # authorized_key (automation_user)
+  - name: ansible.posix
+    version: ">=2.0.0,<3.0.0"
