@@ -86,7 +86,10 @@ pod_cidr: "10.244.0.0/16"
 # CHECK THESE BEFORE YOUR FIRST RUN — verified against upstream 2026-07-26.
 #   Kubernetes: https://kubernetes.io/releases/
 #   Calico:     https://github.com/projectcalico/calico/releases
-#   containerd: https://download.docker.com/linux/ubuntu/dists/noble/stable/binary-amd64/Packages
+#   containerd: https://download.docker.com/linux/ubuntu/dists/resolute/stable/binary-amd64/Packages
+#               (suite = the nodes' VERSION_CODENAME; the role builds the repo
+#                line from ansible_distribution_release, so this URL must match
+#                the nodes' actual release or the pin below will not resolve)
 #
 # Each artefact digest sits next to the version it belongs to. Regenerate a
 # digest whenever you bump its version:
@@ -100,7 +103,14 @@ kubernetes_key_sha256: "7627818cf7bae52f9008c93e8b1f961f53dea11d40891778de216fb1
 
 # containerd comes from Docker's repo. Pinned and held: an unintended upgrade
 # resets SystemdCgroup and breaks the kubelet without mentioning cgroups.
-containerd_apt_version: "2.2.6-1~ubuntu.24.04~noble"
+#
+# The `~ubuntu.26.04~resolute` suffix is NOT cosmetic — Docker publishes a
+# separately-versioned build per Ubuntu suite, and the role derives the repo line
+# from ansible_distribution_release. A noble-suffixed pin against resolute nodes
+# fails with "Version '...' for 'containerd.io' was not found", which reads like
+# a missing package rather than a wrong release. Verified present in the
+# resolute suite 2026-07-26. Bump this whenever the nodes' Ubuntu release changes.
+containerd_apt_version: "2.2.6-1~ubuntu.26.04~resolute"
 # sha256 of https://download.docker.com/linux/ubuntu/gpg
 # This is a rotating aggregate keyring — if it changes legitimately this digest
 # must be regenerated AND cross-checked against Docker's install docs.

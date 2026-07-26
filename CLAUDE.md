@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Infrastructure-as-code for a 3-node Kubernetes homelab (3× Dell OptiPlex 7050, Ubuntu 24.04 LTS). Uses Ansible for machine provisioning and kubeadm for cluster bootstrap. **Ansible owns the machines; Argo CD (not yet implemented) will own everything inside the cluster.**
+Infrastructure-as-code for a 3-node Kubernetes homelab (3× Dell OptiPlex 7050, Ubuntu 26.04 LTS "resolute"). Uses Ansible for machine provisioning and kubeadm for cluster bootstrap. **Ansible owns the machines; Argo CD (not yet implemented) will own everything inside the cluster.**
 
 ## Commands
 
@@ -29,7 +29,7 @@ same lint into a pre-commit hook alongside `gitleaks`; the hook is convenience,
 `make check` is the gate (hooks are bypassable with `--no-verify`).
 
 **`make test` is the only automated test.** It runs the `hardening` role verbatim
-against an Ubuntu 24.04 container with real systemd as PID 1 — no mocked handlers —
+against an Ubuntu 26.04 container with real systemd as PID 1 — no mocked handlers —
 then checks idempotency and asserts on the resulting sshd/apt/ufw state. Only
 `hardening` has a scenario: the other roles need a real kernel (swap, modprobe,
 sysctls) or a live API server, so a container would prove nothing. If you add a
@@ -114,8 +114,8 @@ is a deliberate 4-step rollout documented in `group_vars/all.yml`.
 
 ### Inventory layout
 ```
-[control_plane]  node-1 (192.168.178.26)
-[workers]        node-2 (192.168.178.27), node-3 (192.168.178.28)
+[control_plane]  node-1 (192.168.178.11)
+[workers]        node-2 (192.168.178.44), node-3 (192.168.178.66)
 [k8s_cluster:children]  control_plane + workers
 ```
 

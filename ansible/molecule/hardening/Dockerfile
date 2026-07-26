@@ -7,7 +7,7 @@
 #
 # Requires the container to be started --privileged with the host cgroup fs
 # mounted; see create.yml.
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update -qq \

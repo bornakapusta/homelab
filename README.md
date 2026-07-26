@@ -23,7 +23,7 @@ sudo apt install ansible          # or: brew install ansible / pipx install ansi
 ssh-keygen -t ed25519             # if you don't already have a key
 ```
 
-On the **nodes**: Ubuntu Server 24.04 LTS installed, reachable over SSH with your key,
+On the **nodes**: Ubuntu Server 26.04 LTS installed, reachable over SSH with your key,
 static IPs (DHCP reservations), and swap either off or ignorable (a playbook disables it).
 
 ---

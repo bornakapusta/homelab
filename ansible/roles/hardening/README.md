@@ -77,7 +77,7 @@ It *edits* `/etc/default/ufw` in place. All carry an `Ansible managed` header.
 make test        # molecule test -s hardening
 ```
 
-The scenario runs the role verbatim against an Ubuntu 24.04 container with real
+The scenario runs the role verbatim against an Ubuntu 26.04 container with real
 systemd as PID 1 — no mocked handlers — then checks idempotency and asserts on
 the resulting sshd, apt, and ufw state, including that `backup: true` actually
 produced a recoverable copy. See [`../../molecule/hardening/`](../../molecule/hardening/).

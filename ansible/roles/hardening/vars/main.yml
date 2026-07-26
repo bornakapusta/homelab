@@ -16,5 +16,5 @@
 #
 # One style for every file this role writes, including the two under
 # /etc/apt/apt.conf.d/ — `#` comments are valid there alongside apt.conf's own
-# `//` and `/* */` forms (verified with `apt-config dump` on ubuntu:24.04).
+# `//` and `/* */` forms (verified with `apt-config dump` on ubuntu:26.04).
 __hardening_managed_header: "{{ lookup('config', 'DEFAULT_MANAGED_STR') | comment }}"

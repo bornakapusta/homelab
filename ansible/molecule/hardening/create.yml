@@ -3,7 +3,7 @@
   hosts: localhost
   gather_facts: false
   vars:
-    molecule_image: molecule-hardening-ubuntu:24.04
+    molecule_image: molecule-hardening-ubuntu:26.04
     molecule_container: molecule-hardening
   tasks:
     - name: Build the systemd-capable test image

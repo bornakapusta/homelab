@@ -3,7 +3,7 @@
 # See linux-k8s-foundations.md §3 for the reasoning behind each choice.
 
 # --- SSH -------------------------------------------------------------------
-# A drop-in file is cleaner than editing sshd_config; Ubuntu 24.04 includes
+# A drop-in file is cleaner than editing sshd_config; Ubuntu 26.04 includes
 # /etc/ssh/sshd_config.d/*.conf by default.
 - name: Harden sshd
   ansible.builtin.copy:

@@ -4,7 +4,7 @@
 # kubernetes_minor: (required) e.g. "1.36" — used for the apt repo URL
 # kubernetes_apt_version: (required) e.g. "1.36.3-1.1"
 # kubernetes_key_sha256: (required) digest of the k8s apt signing key
-# containerd_apt_version: (required) e.g. "2.2.6-1~ubuntu.24.04~noble"
+# containerd_apt_version: (required) e.g. "2.2.6-1~ubuntu.26.04~resolute"
 # docker_key_sha256: (required) digest of the Docker apt signing key
 
 # Packages held back from `apt upgrade` so an unrelated patch run can never
