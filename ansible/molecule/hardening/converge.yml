@@ -1,0 +1,20 @@
+---
+- name: Converge
+  hosts: molecule
+  become: false
+  vars:
+    # RFC 5737 documentation addresses, not the real LAN — per the CoP
+    # documentation convention, and so nobody copies a homelab subnet out of a
+    # test fixture into something real.
+    ssh_allowed_users:
+      - borna
+      - ansible
+    ssh_allowed_from:
+      - 192.0.2.0/24
+    node_ips:
+      - 198.51.100.10
+      - 198.51.100.11
+  tasks:
+    - name: Apply the hardening role
+      ansible.builtin.include_role:
+        name: hardening

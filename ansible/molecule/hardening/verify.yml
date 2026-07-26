@@ -1,0 +1,132 @@
+---
+- name: Verify
+  hosts: molecule
+  become: false
+  gather_facts: false
+  vars:
+    ssh_allowed_users:
+      - borna
+      - ansible
+    ssh_allowed_from:
+      - 192.0.2.0/24
+    node_ips:
+      - 198.51.100.10
+      - 198.51.100.11
+  tasks:
+    # --- the sshd drop-in: the file that locks you out if it is wrong ---------
+    - name: Read the sshd drop-in
+      ansible.builtin.slurp:
+        src: /etc/ssh/sshd_config.d/99-hardening.conf
+      register: verify_sshd_conf
+
+    - name: The sshd drop-in must be marked as machine-written and lock down auth
+      ansible.builtin.assert:
+        that:
+          - "'Ansible managed' in __sshd"
+          - "'PermitRootLogin no' in __sshd"
+          - "'PasswordAuthentication no' in __sshd"
+        fail_msg: "sshd drop-in is missing its provenance header or a core directive."
+        quiet: true
+      vars:
+        __sshd: "{{ verify_sshd_conf.content | b64decode }}"
+
+    # Both accounts must survive. Losing either one is the single most
+    # destructive regression this role can have: it locks that account out of
+    # every node at once, including the one Ansible is connected as.
+    - name: Every allowed user must be present in AllowUsers
+      ansible.builtin.assert:
+        that:
+          - __allow_line | length == 1
+          - item in __allow_line | first
+        fail_msg: "{{ item }} is missing from AllowUsers — this would lock it out of every node."
+        quiet: true
+      loop: "{{ ssh_allowed_users }}"
+      vars:
+        __allow_line: >-
+          {{ (verify_sshd_conf.content | b64decode).splitlines()
+             | select('match', '^AllowUsers ') | list }}
+
+    - name: Validate the generated config with sshd -t
+      ansible.builtin.command: sshd -t
+      changed_when: false
+
+    # --- apt drop-ins ---------------------------------------------------------
+    # This is the assertion that would have caught the mistake made while writing
+    # this role: `#` is a valid apt.conf comment, but if it were not, the header
+    # would break every apt invocation on the node. Prove it parses.
+    - name: Apt must still parse its config after the header was added
+      ansible.builtin.command: apt-config dump
+      register: verify_apt
+      changed_when: false
+
+    - name: The unattended-upgrade settings must survive the round trip
+      ansible.builtin.assert:
+        that:
+          - '''APT::Periodic::Unattended-Upgrade "1"'' in verify_apt.stdout'
+          - '''Unattended-Upgrade::Automatic-Reboot "false"'' in verify_apt.stdout'
+        fail_msg: >-
+          apt parsed the files but lost a setting — check the managed header did
+          not swallow the first directive.
+        quiet: true
+
+    # --- firewall ------------------------------------------------------------
+    - name: Read /etc/default/ufw
+      ansible.builtin.slurp:
+        src: /etc/default/ufw
+      register: verify_ufw_default
+
+    # The single line that most often breaks pod networking silently.
+    - name: Forwarding must stay enabled, or pod-to-pod traffic dies silently
+      ansible.builtin.assert:
+        that:
+          - "'DEFAULT_FORWARD_POLICY=\"ACCEPT\"' in verify_ufw_default.content | b64decode"
+        fail_msg: "DEFAULT_FORWARD_POLICY is not ACCEPT — Kubernetes pod networking will break."
+        quiet: true
+
+    - name: Read the ufw ruleset
+      ansible.builtin.command: ufw status verbose
+      register: verify_ufw_status
+      changed_when: false
+
+    - name: Firewall must be active and trust every peer node
+      ansible.builtin.assert:
+        that:
+          - "'Status: active' in verify_ufw_status.stdout"
+          - item in verify_ufw_status.stdout
+        fail_msg: "Peer {{ item }} is not trusted by ufw."
+        quiet: true
+      loop: "{{ node_ips }}"
+
+    # --- backup: true actually works -----------------------------------------
+    # Tamper with the live file, re-apply, and prove the previous contents were
+    # preserved. Without this, `backup: true` is an untested claim.
+    - name: Tamper with the sshd drop-in to force a rewrite
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config.d/99-hardening.conf
+        line: "# tampered by molecule"
+        insertafter: EOF
+
+    - name: Re-apply the role over the tampered file
+      ansible.builtin.include_role:
+        name: hardening
+
+    - name: Find the backups the rewrite left behind
+      ansible.builtin.find:
+        paths: /etc/ssh/sshd_config.d
+        patterns: "99-hardening.conf.*~"
+        use_regex: false
+      register: verify_backups
+
+    - name: A backup of the previous sshd config must exist
+      ansible.builtin.assert:
+        that:
+          - verify_backups.matched > 0
+        fail_msg: >-
+          backup: true did not produce a backup. The break-glass copy of the file
+          that can lock you out of every node is not being kept.
+        quiet: true
+
+    # sshd's Include only globs *.conf, so the backup must NOT be loaded.
+    - name: The backup must be inert — sshd still accepts the config
+      ansible.builtin.command: sshd -t
+      changed_when: false

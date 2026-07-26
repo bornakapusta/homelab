@@ -1,0 +1,26 @@
+---
+# DELIBERATELY MINIMAL. This role's entire value is the wording of its own
+# fail_msg blocks — each one names the variable, explains what breaks, and says
+# how to fix it. Argument validation runs BEFORE those assertions and emits a
+# generic "missing required arguments: pod_cidr" instead, so requiring the same
+# variables here would replace good diagnostics with bad ones.
+#
+# Only what this role needs in order to run at all is declared required. The
+# variables it validates on everyone else's behalf are checked in tasks/main.yml.
+argument_specs:
+  main:
+    short_description: Assert unrecoverable settings before any node is touched
+    description:
+      - Fails fast on the controller, before a single node is contacted.
+      - >-
+        Several checked values are baked into TLS certificates by `kubeadm init`
+        and cannot be changed afterwards without `kubeadm reset` on every node.
+      - See tasks/main.yml for the full list of assertions and their reasoning.
+    options:
+      cluster_hosts:
+        description:
+          - Every host in the cluster, resolved from the inventory in group_vars.
+          - Looped over to check that each host has a literal IPv4 ansible_host.
+        type: list
+        elements: str
+        required: true

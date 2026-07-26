@@ -1,0 +1,48 @@
+---
+# Install with `make hooks`. Run over everything with `pre-commit run --all-files`.
+#
+# The point of this file is the FIRST hook. This repo keeps real secrets one
+# .gitignore line away from a commit: autoinstall/user-data carries a password
+# hash and an SSH public key, ansible/kubeconfig carries cluster admin
+# credentials, and tailscale_auth_key is expected to arrive from ansible-vault.
+# A gitignore protects against the paths you predicted; secret scanning protects
+# against the ones you did not.
+#
+# The lint hooks below duplicate `make check` on purpose — same checks, earlier.
+# They are not a substitute for it: pre-commit is bypassable with --no-verify,
+# so `make check` stays the gate before `make nodes`.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # Catches a partially-resolved merge before it reaches a node.
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      # Rejects anything over 500 KB. The kubeconfig and any accidental disk
+      # image or vault blob trip this before they are committed.
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      # Private keys, in any file, under any name.
+      - id: detect-private-key
+      - id: check-yaml
+        # Ansible YAML uses tags and !vault blocks that the plain parser rejects.
+        args: [--allow-multiple-documents]
+        exclude: ^ansible/(roles/.*/templates/|molecule/)
+
+  - repo: https://github.com/ansible/ansible-lint
+    rev: v26.6.0
+    hooks:
+      - id: ansible-lint
+        # Matches `make check`: the whole tree, production profile, config from
+        # the root .ansible-lint.
+        args: ["."]
+        additional_dependencies:
+          - ansible-core>=2.19

@@ -4,7 +4,7 @@
 - name: Check whether the cluster is already initialised
   ansible.builtin.stat:
     path: /etc/kubernetes/admin.conf
-  register: admin_conf
+  register: __control_plane_admin_conf
 
 # --control-plane-endpoint is the important flag: it puts a NAME (not this
 # node's IP) in the certificates, which is what allows extra control-plane
@@ -29,9 +29,9 @@
     --pod-network-cidr={{ pod_cidr }}
     --node-name={{ inventory_hostname }}
     --skip-token-print
-  when: not admin_conf.stat.exists
-  register: kubeadm_init
-  changed_when: kubeadm_init.rc == 0
+  when: not __control_plane_admin_conf.stat.exists
+  register: __control_plane_kubeadm_init
+  changed_when: __control_plane_kubeadm_init.rc == 0
 
 # --- kubeconfig for the admin user on the node -----------------------------
 - name: Create .kube directory for {{ admin_user }}
@@ -70,12 +70,12 @@
   ansible.builtin.command: kubectl -n kube-system get daemonset calico-node
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  register: calico_present
+  register: __control_plane_calico_present
   failed_when: false
   changed_when: false
 
 - name: Install Calico
-  when: calico_present.rc != 0
+  when: __control_plane_calico_present.rc != 0
   block:
     - name: Download the Calico manifest
       ansible.builtin.get_url:
@@ -101,9 +101,9 @@
 
     - name: Confirm the CIDR was patched
       ansible.builtin.command: grep -A1 'CALICO_IPV4POOL_CIDR' /root/calico.yaml
-      register: cidr_check
+      register: __control_plane_cidr_check
       changed_when: false
-      failed_when: pod_cidr not in cidr_check.stdout
+      failed_when: pod_cidr not in __control_plane_cidr_check.stdout
 
     - name: Apply Calico
       ansible.builtin.command: kubectl apply -f /root/calico.yaml
@@ -128,20 +128,20 @@
   ansible.builtin.command: kubectl get nodes -o jsonpath='{.items[*].metadata.name}'
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  register: joined_nodes
+  register: __control_plane_joined_nodes
   changed_when: false
 
 # no_log stays here: this command's entire output IS the secret. changed_when
 # reflects reality — it mints server-side state (a token with a 24h TTL).
 - name: Generate a worker join command
   ansible.builtin.command: kubeadm token create --print-join-command
-  register: join_command_raw
-  changed_when: join_command_raw.rc == 0
+  register: __control_plane_join_command_raw
+  changed_when: __control_plane_join_command_raw.rc == 0
   no_log: true
-  when: groups['workers'] | difference(joined_nodes.stdout.split()) | length > 0
+  when: worker_hosts | difference(__control_plane_joined_nodes.stdout.split()) | length > 0
 
 - name: Publish the join command as a fact
   ansible.builtin.set_fact:
-    kubeadm_join_command: "{{ join_command_raw.stdout }}"
+    control_plane_join_command: "{{ __control_plane_join_command_raw.stdout }}"
   no_log: true
-  when: join_command_raw is not skipped
+  when: __control_plane_join_command_raw is not skipped

@@ -1,0 +1,31 @@
+---
+argument_specs:
+  main:
+    short_description: Join a worker node to the cluster and label it
+    description:
+      - Joins via the token published by the control_plane role, then labels the node.
+      - >-
+        Cannot run alone. The bootstrap token is minted by the control_plane role
+        and cannot be produced from a worker, so `--tags workers` without the
+        control-plane play fails with an explicit assertion rather than a timeout.
+      - >-
+        Refuses to continue on stale kubeadm state - a node holding
+        /etc/kubernetes/kubelet.conf that the API server does not know about is
+        carrying leftovers from an earlier attempt and needs `kubeadm reset`.
+    options:
+      control_plane_host:
+        description:
+          - Inventory hostname of the control-plane node.
+          - >-
+            Every kubectl call in this role is delegated to it, since the worker has
+            no admin kubeconfig of its own.
+        type: str
+        required: true
+      control_plane_endpoint:
+        description:
+          - DNS name of the API server, named in the join-failure diagnostics.
+          - >-
+            The most common join failure is this name not resolving on the worker;
+            the base role is what writes it into /etc/hosts.
+        type: str
+        required: true

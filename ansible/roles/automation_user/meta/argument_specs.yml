@@ -1,0 +1,39 @@
+---
+argument_specs:
+  main:
+    short_description: Dedicated Ansible automation account with its own key
+    description:
+      - Creates the automation user, installs its key, grants passwordless sudo.
+      - >-
+        Buys independent key rotation and auth logs that distinguish a playbook
+        run from a human login. Does NOT reduce privilege - Ansible needs root
+        either way, so this account also holds NOPASSWD:ALL.
+      - Must run before the hardening role, which reloads sshd.
+    options:
+      ansible_service_user:
+        description: Name of the automation account created on every node.
+        type: str
+        required: true
+      ansible_service_pubkey:
+        description:
+          - Path ON THE CONTROLLER to the public half of the automation keypair.
+          - >-
+            Typed as str rather than path on purpose - the role applies
+            `| expanduser` itself, and path coercion here would silently rewrite
+            the value the role's own failure message prints back to you.
+        type: str
+        required: true
+      ssh_allowed_from:
+        description:
+          - Networks in CIDR form that the automation key may be used from.
+          - Becomes the from= restriction in authorized_keys, so a stolen key is
+            useless off-LAN.
+        type: list
+        elements: str
+        required: true
+      automation_user_key_options:
+        description:
+          - Raw authorized_keys option string applied to the automation key.
+          - Do not add no-pty; the sudo become plugin can need one.
+        type: str
+        required: false

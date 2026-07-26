@@ -1,6 +1,12 @@
-.PHONY: deps check ping nodes cluster all status hosts reset-help
+.PHONY: deps check hooks test ping nodes cluster all status hosts reset-help
 
 ANSIBLE_DIR := ansible
+
+# The Docker socket, taken from whatever context is active. Not hardcoded to
+# /var/run/docker.sock: on macOS that is often a symlink into a Docker Desktop
+# path that does not exist under OrbStack/Colima, and the Python docker SDK that
+# community.docker uses cannot fall back the way the docker CLI does.
+DOCKER_HOST_FROM_CTX := $(shell docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null)
 
 # Read from the single sources of truth rather than duplicating them here.
 CP_ENDPOINT := $(shell awk '/^control_plane_endpoint:/{print $$2}' $(ANSIBLE_DIR)/group_vars/all.yml)
@@ -14,6 +20,32 @@ deps:
 check:
 	cd $(ANSIBLE_DIR) && ansible-playbook --syntax-check site.yml cluster.yml
 	cd $(ANSIBLE_DIR) && ansible-lint
+
+## install the git pre-commit hooks (lint + secret scanning)
+hooks:
+	pre-commit install
+	@echo "Hooks installed. Run 'pre-commit run --all-files' for a full sweep."
+
+## run the molecule scenarios (needs Docker; touches no node)
+#
+# Only the hardening role has a scenario. base, kubernetes_node, control_plane
+# and worker need a real kernel or a live API server, so a container would prove
+# nothing about them — see ansible/molecule/hardening/molecule.yml.
+#
+# EXPECTED NOISE: molecule prints
+#   CRITICAL 'molecule/default/molecule.yml' glob failed.  Exiting.
+# once at the start. It is molecule's `test` command probing for a scenario named
+# `default`, which this repo does not have. It does not exit, the run proceeds
+# normally, and the exit code is 0. Judge the run by the SCENARIO RECAP line.
+test:
+	@command -v molecule >/dev/null 2>&1 || \
+	  { echo "ERROR: molecule not installed. pip install molecule molecule-plugins docker requests"; exit 1; }
+	@[ -n "$(DOCKER_HOST_FROM_CTX)" ] || \
+	  { echo "ERROR: no Docker context found. Is Docker running?"; exit 1; }
+	cd $(ANSIBLE_DIR) && \
+	  DOCKER_HOST="$(DOCKER_HOST_FROM_CTX)" \
+	  ANSIBLE_ROLES_PATH="$(CURDIR)/$(ANSIBLE_DIR)/roles" \
+	  molecule test -s hardening
 
 ## check SSH connectivity to all nodes
 ping:

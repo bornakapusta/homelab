@@ -1,0 +1,40 @@
+---
+argument_specs:
+  main:
+    short_description: SSH lockdown, host firewall, automatic security patching
+    description:
+      - Writes an sshd drop-in, configures ufw, enables unattended-upgrades.
+      - >-
+        Automatic reboots are disabled deliberately - on a cluster you drain a
+        node by hand before rebooting it.
+      - >-
+        NOT idempotent-safe to run with a wrong ssh_allowed_users - dropping the
+        connecting account from that list locks you out of every node on the next
+        sshd reload. The preflight role asserts against exactly that.
+    options:
+      ssh_allowed_users:
+        description:
+          - Accounts sshd will accept, rendered into AllowUsers.
+          - >-
+            MUST contain the account Ansible connects as, and both admin_user and
+            ansible_service_user, or the next reload locks that account out of
+            every node.
+        type: list
+        elements: str
+        required: true
+      ssh_allowed_from:
+        description:
+          - Source networks in CIDR form allowed to reach port 22.
+          - Also scopes the ingress 80/443 rules.
+        type: list
+        elements: str
+        required: true
+      node_ips:
+        description:
+          - Peer node addresses, trusted wholesale by ufw.
+          - >-
+            Kubernetes needs a wide range of inter-node ports; allowing the peers
+            outright is less fragile than hand-punching each one.
+        type: list
+        elements: str
+        required: true

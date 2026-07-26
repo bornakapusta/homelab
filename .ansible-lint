@@ -8,10 +8,17 @@ exclude_paths:
   - todos/
   - docs/
 
-skip_list:
-  # Wants every registered variable prefixed with its role name
-  # (worker_kubelet_conf, kubernetes_node_cgroup_check, …). That guards against
-  # cross-role collisions in large collections; with 7 local roles and no actual
-  # collisions it costs readability for nothing. Revisit if these roles ever get
-  # reused outside this repo.
-  - var-naming[no-role-prefix]
+# No skip_list.
+#
+# This used to skip var-naming[no-role-prefix]. That skip is gone: every
+# registered and set_fact variable is now `__<role>_`-prefixed and every role
+# default is `<role>_`-prefixed, so the rule passes on its own merits instead of
+# being switched off. The reason for doing the renames rather than keeping the
+# skip: site.yml runs all five node roles in ONE play, so they share a single
+# variable namespace for the whole run, and `meta: flush_handlers` in
+# kubernetes_node already reaches across role boundaries. "No collisions today"
+# was true but fragile.
+#
+# The one variable intentionally NOT `__`-prefixed is
+# control_plane_join_command: it is a published output of the control_plane role
+# that the worker role reads via hostvars, so it is interface, not internal.

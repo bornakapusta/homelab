@@ -13,3 +13,10 @@ collections:
   # authorized_key (automation_user)
   - name: ansible.posix
     version: ">=2.0.0,<3.0.0"
+
+  # Test-only: the molecule/hardening scenario builds and drives the container.
+  # No role uses it, so nothing on a node depends on it — but `make deps` installs
+  # it anyway so that `make test` works straight after a clone rather than failing
+  # on a missing collection halfway through building an image.
+  - name: community.docker
+    version: ">=5.0.0,<6.0.0"

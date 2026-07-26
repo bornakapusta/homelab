@@ -1,0 +1,11 @@
+{
+  "enabledPlugins": {
+    "ansible-good-practices@claude-ansible-skills": true,
+    "ansible-new-role@claude-ansible-skills": true,
+    "ansible-new-collection@claude-ansible-skills": true,
+    "ansible-new-ee@claude-ansible-skills": true,
+    "ansible-new-molecule@claude-ansible-skills": true,
+    "ansible-docs@claude-ansible-skills": true,
+    "ansible-zen@claude-ansible-skills": true
+  }
+}

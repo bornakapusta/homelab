@@ -4,7 +4,7 @@
 - name: Check whether this node has already joined
   ansible.builtin.stat:
     path: /etc/kubernetes/kubelet.conf
-  register: kubelet_conf
+  register: __worker_kubelet_conf
 
 # Cluster membership is queried directly rather than read from the control-plane
 # play's facts, so this role works when run with --tags workers.
@@ -12,8 +12,8 @@
   ansible.builtin.command: kubectl get nodes -o jsonpath='{.items[*].metadata.name}'
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  delegate_to: "{{ groups['control_plane'][0] }}"
-  register: cluster_members
+  delegate_to: "{{ control_plane_host }}"
+  register: __worker_cluster_members
   changed_when: false
   check_mode: false
 
@@ -29,16 +29,16 @@
       join. Clear it on that node, then re-run `make cluster`:
         sudo kubeadm reset -f && sudo rm -rf /etc/cni/net.d
   when:
-    - kubelet_conf.stat.exists
-    - inventory_hostname not in cluster_members.stdout.split()
+    - __worker_kubelet_conf.stat.exists
+    - inventory_hostname not in __worker_cluster_members.stdout.split()
 
 - name: Join the cluster
-  when: not kubelet_conf.stat.exists
+  when: not __worker_kubelet_conf.stat.exists
   block:
     - name: The control-plane play must have produced a join command
       ansible.builtin.assert:
         that:
-          - hostvars[groups['control_plane'][0]].kubeadm_join_command is defined
+          - hostvars[control_plane_host].control_plane_join_command is defined
         fail_msg: >-
           No join command available. Run the control_plane play first
           (`make cluster`, or at least --tags control_plane) — running with
@@ -49,16 +49,16 @@
     # surfaces stderr, which does not echo it.
     - name: Run kubeadm join
       ansible.builtin.command: >
-        {{ hostvars[groups['control_plane'][0]].kubeadm_join_command }}
+        {{ hostvars[control_plane_host].control_plane_join_command }}
         --node-name={{ inventory_hostname }}
-      register: join_result
-      changed_when: join_result.rc == 0
+      register: __worker_join_result
+      changed_when: __worker_join_result.rc == 0
       no_log: true
 
   rescue:
     - name: Show why the join failed
       ansible.builtin.debug:
-        msg: "{{ join_result.stderr_lines | default(['no stderr captured']) }}"
+        msg: "{{ __worker_join_result.stderr_lines | default(['no stderr captured']) }}"
 
     - name: Fail with a pointer to the node-side logs
       ansible.builtin.fail:
@@ -75,9 +75,9 @@
   ansible.builtin.command: kubectl get node {{ inventory_hostname }} -o name
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  delegate_to: "{{ groups['control_plane'][0] }}"
-  register: node_registered
-  until: node_registered.rc == 0
+  delegate_to: "{{ control_plane_host }}"
+  register: __worker_node_registered
+  until: __worker_node_registered.rc == 0
   retries: 30
   delay: 5
   changed_when: false
@@ -92,8 +92,8 @@
     -o jsonpath='{.metadata.labels.node-role\.kubernetes\.io/worker}'
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  delegate_to: "{{ groups['control_plane'][0] }}"
-  register: worker_label
+  delegate_to: "{{ control_plane_host }}"
+  register: __worker_label
   changed_when: false
   check_mode: false
 
@@ -103,6 +103,6 @@
     node-role.kubernetes.io/worker=worker --overwrite
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  delegate_to: "{{ groups['control_plane'][0] }}"
-  when: worker_label.stdout != "worker"
+  delegate_to: "{{ control_plane_host }}"
+  when: __worker_label.stdout != "worker"
   changed_when: true

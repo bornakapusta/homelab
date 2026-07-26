@@ -116,9 +116,14 @@
       --node-ip wiring all need a literal address — add ansible_host=<ip> for
       {{ item }} in inventory.ini.
     quiet: true
-  loop: "{{ groups['k8s_cluster'] }}"
+  loop: "{{ cluster_hosts }}"
   run_once: true
 
+# The only place in the tree that still reads groups[] directly, and deliberately
+# so: this assertion is ABOUT the inventory's shape, so resolving it through
+# control_plane_host first would hide the very thing being checked. Everywhere
+# else the roles consume control_plane_host / worker_hosts / cluster_hosts from
+# group_vars, which is what keeps group names out of the role code.
 - name: There must be exactly one control-plane node in Stage A
   ansible.builtin.assert:
     that:

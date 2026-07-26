@@ -1,8 +1,11 @@
 ---
-# Defaults for the base role. Required vars come from group_vars/all.yml:
-# admin_user: (required)
+# Defaults for the base role. The full, authoritative interface is declared in
+# meta/argument_specs.yml and validated on every run; these comments are only a
+# pointer. Required vars come from group_vars/all.yml:
 # timezone: (required)
 # control_plane_endpoint: (required)
+# control_plane_host: (required)
+# tailscale_auth_key: (optional) skips the whole Tailscale block when unset
 
 # THE authoritative base package list — group_vars/all.yml deliberately does not
 # duplicate it, because a duplicate there would silently win and edits here would

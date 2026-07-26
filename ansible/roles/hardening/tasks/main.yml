@@ -11,8 +11,13 @@
     owner: root
     group: root
     mode: "0644"
+    # backup matters most on this file and on the sudoers drop-in: a bad write to
+    # either locks every node at once. The backup lands beside it as
+    # 99-hardening.conf.<pid>.<date>~, which sshd's `Include *.conf` does not
+    # match, so the old copy is readable from the console without being loaded.
+    backup: true
     content: |
-      # Managed by Ansible — do not edit by hand
+      {{ __hardening_managed_header }}
       PermitRootLogin no
       PasswordAuthentication no
       KbdInteractiveAuthentication no
@@ -48,6 +53,10 @@
     path: /etc/default/ufw
     regexp: '^DEFAULT_FORWARD_POLICY='
     line: 'DEFAULT_FORWARD_POLICY="ACCEPT"'
+    # This file is shipped by the ufw package and edited in place rather than
+    # replaced, so the backup is the only record of what the distribution's
+    # default was.
+    backup: true
   notify: Reload ufw
 
 - name: Default deny incoming
@@ -101,7 +110,10 @@
     owner: root
     group: root
     mode: "0644"
+    # apt skips files ending in `~`, so the backup is inert where it lands.
+    backup: true
     content: |
+      {{ __hardening_managed_header }}
       APT::Periodic::Update-Package-Lists "1";
       APT::Periodic::Unattended-Upgrade "1";
       APT::Periodic::AutocleanInterval "7";
@@ -113,7 +125,9 @@
     owner: root
     group: root
     mode: "0644"
+    backup: true
     content: |
+      {{ __hardening_managed_header }}
       Unattended-Upgrade::Automatic-Reboot "false";
       // Kubernetes packages are version-held; never let them auto-upgrade.
       Unattended-Upgrade::Package-Blacklist {

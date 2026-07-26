@@ -9,5 +9,5 @@
 # from= scopes the key to the networks you administer from, so a stolen key is
 # useless off-LAN. Forwarding is disabled because a config-management account has
 # no reason to tunnel. Do NOT add no-pty: the sudo become plugin can need one.
-automation_key_options: >-
+automation_user_key_options: >-
   from="{{ ssh_allowed_from | join(',') }}",no-port-forwarding,no-agent-forwarding,no-X11-forwarding

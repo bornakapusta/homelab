@@ -1,0 +1,50 @@
+---
+argument_specs:
+  main:
+    short_description: Make a machine kubeadm-ready
+    description:
+      - Swap off, kernel modules and sysctls, containerd, pinned kube packages.
+      - >-
+        Versions are pinned AND held. An unintended containerd upgrade resets
+        SystemdCgroup and breaks the kubelet without mentioning cgroups, which is
+        why the hold list includes containerd.io.
+      - >-
+        Leaves the kubelet enabled but not started - it crash-loops by design
+        until kubeadm init or join configures it.
+    options:
+      kubernetes_minor:
+        description:
+          - Kubernetes minor version, e.g. "1.36". Used to build the apt repo URL.
+          - Bump together with kubernetes_apt_version; preflight asserts they match.
+        type: str
+        required: true
+      kubernetes_apt_version:
+        description: Exact pinned apt version, e.g. "1.36.3-1.1".
+        type: str
+        required: true
+      kubernetes_key_sha256:
+        description:
+          - sha256 of the Kubernetes apt signing key, verified on download.
+          - Stable across minor bumps; regenerate with `curl -fsSL <url> | sha256sum`.
+        type: str
+        required: true
+      containerd_apt_version:
+        description: Exact pinned containerd.io apt version from Docker's repo.
+        type: str
+        required: true
+      docker_key_sha256:
+        description:
+          - sha256 of Docker's apt signing key, verified on download.
+          - >-
+            A rotating aggregate keyring - if this changes legitimately, regenerate
+            AND cross-check against Docker's install docs before trusting it.
+        type: str
+        required: true
+      kubernetes_node_managed_held_packages:
+        description:
+          - Packages held back from apt upgrade so a patch run cannot break the cluster.
+          - One list drives both the unhold at role start and the hold at role end,
+            so the two can never drift apart.
+        type: list
+        elements: str
+        required: false

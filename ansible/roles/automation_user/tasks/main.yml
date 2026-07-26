@@ -18,13 +18,13 @@
   delegate_to: localhost
   become: false
   run_once: true
-  register: automation_pubkey
+  register: __automation_user_pubkey
   changed_when: false
 
 - name: The automation public key must exist before we can install it
   ansible.builtin.assert:
     that:
-      - automation_pubkey.stat.exists
+      - __automation_user_pubkey.stat.exists
     fail_msg: >-
       No automation public key at {{ ansible_service_pubkey }}.
       Generate one on this laptop, then re-run:
@@ -54,7 +54,7 @@
   ansible.posix.authorized_key:
     user: "{{ ansible_service_user }}"
     key: "{{ lookup('file', ansible_service_pubkey | expanduser) }}"
-    key_options: "{{ automation_key_options }}"
+    key_options: "{{ automation_user_key_options }}"
     # Exactly one key may authenticate this account — a stale key left behind
     # here would be an unnoticed way in.
     exclusive: true
@@ -67,5 +67,11 @@
     owner: root
     group: root
     mode: "0440"
-    content: "{{ ansible_service_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    content: |
+      {{ __automation_user_managed_header }}
+      {{ ansible_service_user }} ALL=(ALL) NOPASSWD:ALL
     validate: visudo -cf %s
+    # sudo ignores any filename containing a dot or ending in `~`, and the backup
+    # is named 90-ansible.<pid>.<date>~ — so it is never parsed as a sudoers rule,
+    # it is just the previous known-good copy sitting next to the live one.
+    backup: true

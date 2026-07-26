@@ -16,4 +16,4 @@
   ansible.builtin.systemd:
     name: kubelet
     state: restarted
-  when: kubelet_joined.stat.exists | default(false)
+  when: __kubernetes_node_kubelet_joined.stat.exists | default(false)

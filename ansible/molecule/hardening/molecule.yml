@@ -1,0 +1,19 @@
+---
+# Ansible-native molecule: no driver/provisioner/verifier/platforms blocks.
+# Everything is done by the create.yml / converge.yml / verify.yml / destroy.yml
+# playbooks in this directory, using community.docker.
+#
+# Why only the hardening role has a scenario: base, kubernetes_node,
+# control_plane and worker all need a real kernel (swap, modprobe, sysctl,
+# kubeadm) or a live API server, so a container proves nothing about them.
+# hardening writes files and manages sshd/ufw config, which IS meaningfully
+# testable — and it is also the role where a regression locks you out of all
+# three nodes at once.
+scenario:
+  test_sequence:
+    - destroy
+    - create
+    - converge
+    - idempotence
+    - verify
+    - destroy

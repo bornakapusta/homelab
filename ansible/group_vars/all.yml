@@ -46,6 +46,22 @@ ansible_user: "{{ admin_user }}"
 # addresses the nodes actually reach each other on. Set DHCP reservations.
 node_ips: "{{ groups['k8s_cluster'] | map('extract', hostvars, 'ansible_host') | list }}"
 
+# Inventory group names resolved to plain variables, ONCE, here.
+#
+# The roles consume these rather than referencing groups['...'] directly. Group
+# names are inventory *data*; reaching for them inside a role hard-codes the
+# shape of the inventory into the code, so the role can only ever drive an
+# inventory that happens to use these exact group names. Keeping the lookup in
+# one place also means renaming a group is a one-line change instead of a
+# grep across seven roles.
+#
+# Override any of these to point a role at a differently-named group. The
+# preflight role still asserts against the groups themselves — validating the
+# inventory's shape is precisely its job.
+control_plane_host: "{{ groups['control_plane'] | first }}"
+worker_hosts: "{{ groups['workers'] | default([]) }}"
+cluster_hosts: "{{ groups['k8s_cluster'] | default([]) }}"
+
 # Where SSH is allowed from (your LAN, and later your tailnet 100.64.0.0/10).
 # Also used for the ingress 80/443 rules and to scope the automation key's
 # from= restriction.

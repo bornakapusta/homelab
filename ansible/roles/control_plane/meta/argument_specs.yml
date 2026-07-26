@@ -1,0 +1,56 @@
+---
+argument_specs:
+  main:
+    short_description: kubeadm init, Calico CNI, kubeconfig distribution
+    description:
+      - Initialises the control plane, installs Calico, mints a worker join token.
+      - >-
+        control_plane_endpoint and pod_cidr are written into the apiserver
+        certificate and the CNI config here and CANNOT be changed afterwards
+        without `kubeadm reset` on every node.
+      - >-
+        Publishes control_plane_join_command as a fact, consumed by the worker role
+        through hostvars. That is this role's one outbound value.
+    options:
+      admin_user:
+        description:
+          - Human break-glass account that receives a copy of the admin kubeconfig
+            at ~/.kube/config on the control-plane node.
+        type: str
+        required: true
+      control_plane_endpoint:
+        description:
+          - DNS name baked into the apiserver certificate.
+          - >-
+            Must be a NAME, not an IP - that is what allows extra control-plane
+            nodes to be added later without regenerating certificates.
+        type: str
+        required: true
+      pod_cidr:
+        description:
+          - Pod network CIDR, passed to kubeadm and patched into the Calico manifest.
+          - >-
+            Must not overlap the home LAN. Calico's own default is 192.168.0.0/16,
+            which collides with a 192.168.x LAN; preflight rejects that.
+        type: str
+        required: true
+      calico_version:
+        description: Calico release tag, e.g. "v3.30.0".
+        type: str
+        required: true
+      calico_manifest_sha256:
+        description:
+          - sha256 of the Calico manifest, verified on download.
+          - Git tags are mutable, so this digest is what makes the CNI install
+            reproducible. Regenerate when bumping calico_version.
+        type: str
+        required: true
+      worker_hosts:
+        description:
+          - Worker inventory hostnames, resolved from the inventory in group_vars.
+          - >-
+            Compared against live cluster membership so a join token is only minted
+            when a worker actually still needs one.
+        type: list
+        elements: str
+        required: true

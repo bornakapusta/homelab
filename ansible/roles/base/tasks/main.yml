@@ -20,7 +20,7 @@
   ansible.builtin.lineinfile:
     path: /etc/hosts
     regexp: '(^|\s){{ control_plane_endpoint | regex_escape }}(\s|$)'
-    line: "{{ hostvars[groups['control_plane'][0]].ansible_host }} {{ control_plane_endpoint }}"
+    line: "{{ hostvars[control_plane_host].ansible_host }} {{ control_plane_endpoint }}"
     state: present
 
 - name: Set timezone
@@ -62,7 +62,13 @@
     owner: root
     group: root
     mode: "0644"
+    # No backup: here, deliberately — unlike the other managed files, this one
+    # lives in a directory systemd scans for units, and a stray
+    # wifi-no-powersave.service.<pid>.<date>~ makes systemd log a parse warning on
+    # every daemon-reload. There is nothing to break-glass into on this file
+    # anyway; it is generated wholesale from the content below.
     content: |
+      {{ __base_managed_header }}
       [Unit]
       Description=Disable WiFi power saving (cluster stability)
       After=network.target
@@ -87,12 +93,12 @@
 # Skipped entirely if tailscale_auth_key is not set.
 - name: Check if Tailscale is already installed
   ansible.builtin.command: tailscale version
-  register: ts_installed
+  register: __base_ts_installed
   failed_when: false
   changed_when: false
 
 - name: Install Tailscale
-  when: ts_installed.rc != 0 and tailscale_auth_key | default('') | length > 0
+  when: __base_ts_installed.rc != 0 and tailscale_auth_key | default('') | length > 0
   block:
     - name: Download Tailscale install script
       ansible.builtin.get_url:
@@ -109,11 +115,11 @@
     name: tailscaled
     enabled: true
     state: started
-  when: ts_installed.rc == 0 or tailscale_auth_key | default('') | length > 0
+  when: __base_ts_installed.rc == 0 or tailscale_auth_key | default('') | length > 0
 
 - name: Check if already authenticated
   ansible.builtin.command: tailscale status
-  register: ts_status
+  register: __base_ts_status
   failed_when: false
   changed_when: false
   when: tailscale_auth_key | default('') | length > 0
@@ -125,7 +131,7 @@
     tailscale up
     --authkey={{ tailscale_auth_key }}
     --hostname={{ inventory_hostname }}
-  when: tailscale_auth_key | default('') | length > 0 and ts_status.rc | default(0) != 0
+  when: tailscale_auth_key | default('') | length > 0 and __base_ts_status.rc | default(0) != 0
   changed_when: true
   no_log: true
 
@@ -136,7 +142,7 @@
 - name: Check whether a reboot is pending
   ansible.builtin.stat:
     path: /var/run/reboot-required
-  register: reboot_required
+  register: __base_reboot_required
 
 - name: Report that this node needs a manual drain and reboot
   ansible.builtin.debug:
@@ -146,4 +152,4 @@
       - "Reboot:   ssh {{ inventory_hostname }} sudo reboot"
       - "Return:   kubectl uncordon {{ inventory_hostname }}"
       - "On the control-plane node this briefly takes the API server down."
-  when: reboot_required.stat.exists
+  when: __base_reboot_required.stat.exists

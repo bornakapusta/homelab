@@ -10,7 +10,7 @@
 # Packages held back from `apt upgrade` so an unrelated patch run can never
 # break the cluster. One list, used by both the unhold (start of role) and the
 # hold (end of role) so the two can never drift out of sync.
-managed_held_packages:
+kubernetes_node_managed_held_packages:
   - kubelet
   - kubeadm
   - kubectl

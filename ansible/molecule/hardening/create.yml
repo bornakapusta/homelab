@@ -1,0 +1,89 @@
+---
+- name: Create
+  hosts: localhost
+  gather_facts: false
+  vars:
+    molecule_image: molecule-hardening-ubuntu:24.04
+    molecule_container: molecule-hardening
+  tasks:
+    - name: Build the systemd-capable test image
+      community.docker.docker_image:
+        name: "{{ molecule_image }}"
+        source: build
+        force_source: true
+        build:
+          path: "{{ playbook_dir }}"
+          dockerfile: Dockerfile
+          pull: false
+
+    - name: Start the test container
+      community.docker.docker_container:
+        name: "{{ molecule_container }}"
+        image: "{{ molecule_image }}"
+        state: started
+        recreate: true
+        # systemd as PID 1 needs both of these. Without the cgroup mount it
+        # boots into a degraded state where systemctl calls hang.
+        privileged: true
+        cgroupns_mode: host
+        volumes:
+          - /sys/fs/cgroup:/sys/fs/cgroup:rw
+
+    - name: Wait for systemd to finish booting
+      community.docker.docker_container_exec:
+        container: "{{ molecule_container }}"
+        command: systemctl is-system-running --wait
+      register: molecule_systemd
+      changed_when: false
+      # degraded is fine — we deleted most units, so some wants are unmet.
+      failed_when: molecule_systemd.stdout is not match('running|degraded')
+
+    # The image ships with apt lists stripped, and the role installs ufw and
+    # unattended-upgrades with `state: present` and no update_cache of its own.
+    - name: Refresh apt lists so the role can resolve packages
+      community.docker.docker_container_exec:
+        container: "{{ molecule_container }}"
+        command: apt-get update -qq
+      changed_when: true
+
+    # Start sshd, because on a real node it is already running — that is how
+    # Ansible got in. Two things depend on it: `sshd -t` needs the privilege
+    # separation directory /run/sshd, which ssh.service creates via
+    # RuntimeDirectory and which does not exist in a container that never started
+    # it; and the role's `Reload sshd` handler is only a real test if there is a
+    # daemon to reload.
+    - name: Start sshd so the node matches a machine Ansible can reach
+      community.docker.docker_container_exec:
+        container: "{{ molecule_container }}"
+        command: systemctl start ssh
+      changed_when: true
+
+    # Write the host into molecule's own inventory file rather than using
+    # add_host. molecule runs every stage as a SEPARATE ansible-playbook
+    # invocation, so an add_host from this play is gone by the time converge.yml
+    # runs: the plays then match zero hosts and EVERY stage reports success while
+    # testing nothing at all. That false pass is the failure mode this pattern
+    # exists to prevent — do not "simplify" it back to add_host.
+    - name: Register the container in molecule's inventory
+      vars:
+        inventory_partial_yaml: |
+          all:
+            children:
+              molecule:
+                hosts:
+                  {{ molecule_container }}:
+                    ansible_connection: community.docker.docker
+                    ansible_python_interpreter: /usr/bin/python3
+      ansible.builtin.set_fact:
+        molecule_inventory: >-
+          {{ molecule_inventory | default({}, true)
+             | combine(inventory_partial_yaml | from_yaml, recursive=true) }}
+
+    - name: Write the inventory to molecule's ephemeral directory
+      ansible.builtin.copy:
+        content: "{{ molecule_inventory | to_yaml }}"
+        dest: "{{ molecule_ephemeral_directory }}/inventory/molecule_inventory.yml"
+        mode: "0600"
+
+    - name: Reload the inventory so later stages can see the host
+      ansible.builtin.meta: refresh_inventory
