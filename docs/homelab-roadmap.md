@@ -4,7 +4,7 @@
 
 ## Locked-in decisions
 
-> **Stack updated** (see `linux-k8s-foundations.md`): base OS is **Ubuntu Server LTS 24.04**; Kubernetes is **kubeadm (standard/upstream)**, not k3s — start 1 control-plane + 2 workers, then expand to 3× control-plane + **kube-vip** for HA. kubeadm gives you no batteries, so we add CNI (Calico), storage (local-path), and ingress-nginx + **MetalLB** ourselves.
+> **Stack updated** (see `linux-k8s-foundations.md`): base OS is **Ubuntu Server LTS 24.04**; Kubernetes is **kubeadm (standard/upstream)**, not k3s — start 1 control-plane + 2 workers, then expand to 3× control-plane + **kube-vip** for HA. kubeadm gives you no batteries, so we add CNI (Cilium), storage (local-path), and ingress-nginx + **MetalLB** ourselves.
 
 - **Hardware:** 3× Dell OptiPlex 7050 (i5-7500T, 16 GB, 256 GB NVMe). Wipe Windows on all three.
 - **OS / K8s:** **Ubuntu Server LTS 24.04 + kubeadm** (upstream Kubernetes) — this is the end state. **Talos migration is parked** (optional future, not planned now).
@@ -91,7 +91,7 @@ Each phase ends in a **milestone** you can verify. Do them in order; don't skip 
 - **Stage A:** `kubeadm init` on node 1 (single control-plane), join nodes 2 and 3 as **workers**. Simpler first cluster — get the core flow working before HA.
   - ⚠️ **Pass `--control-plane-endpoint=<dns-name-or-future-VIP>` even now**, e.g. `k8s.lab.example`. If you `init` without it, promoting to HA later means regenerating certs and effectively rebuilding the cluster. Costs nothing today, saves a painful redo at Stage B.
   - **Control-plane taint:** by default node-1 won't run your workloads. Leave that taint while learning (2 workers is plenty); remove it later with `kubectl taint nodes node-1 node-role.kubernetes.io/control-plane-` to reclaim its 16 GB / 4 cores.
-- Install a **CNI**: Calico (start) or Cilium. Nodes won't go `Ready` until the CNI is up.
+- Install the pinned **Cilium CNI** chart. Nodes won't go `Ready` until the CNI is up.
 - Copy the admin kubeconfig to your laptop; install `kubectl` + `k9s` locally.
 - Learn: `kubectl get nodes/pods -A`, `describe`, `logs`; deploy a throwaway nginx.
 - **Stage B (later):** rebuild/expand to **3 stacked-etcd control-plane nodes + kube-vip** (API virtual IP) for true HA. Don't start here.

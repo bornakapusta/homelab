@@ -1,9 +1,9 @@
 ---
 argument_specs:
   main:
-    short_description: kubeadm init, Calico CNI, kubeconfig distribution
+    short_description: kubeadm init, Cilium CNI, kubeconfig distribution
     description:
-      - Initialises the control plane, installs Calico, mints a worker join token.
+      - Initialises the control plane, installs Cilium, mints a worker join token.
       - >-
         control_plane_endpoint and pod_cidr are written into the apiserver
         certificate and the CNI config here and CANNOT be changed afterwards
@@ -28,23 +28,32 @@ argument_specs:
         required: true
       pod_cidr:
         description:
-          - Pod network CIDR, passed to kubeadm and patched into the Calico manifest.
+          - Pod network CIDR passed to kubeadm.
           - >-
-            Must not overlap the home LAN. Calico's own default is 192.168.0.0/16,
-            which collides with a 192.168.x LAN; preflight rejects that.
+            Cilium uses Kubernetes host-scope IPAM and consumes the per-node
+            PodCIDRs allocated from this range. It must not overlap the home LAN.
         type: str
         required: true
-      calico_version:
-        description: Calico release tag, e.g. "v3.30.0".
+      cilium_version:
+        description: Cilium Helm chart version, e.g. "1.20.0".
         type: str
         required: true
-      calico_manifest_sha256:
+      cilium_chart_sha256:
         description:
-          - sha256 of the Calico manifest, verified on download.
-          - Git tags are mutable, so this digest is what makes the CNI install
-            reproducible. Regenerate when bumping calico_version.
+          - sha256 OCI manifest digest of the Cilium Helm chart.
+          - >-
+            The role installs by digest rather than mutable tag. Regenerate with
+            `helm pull oci://quay.io/cilium/charts/cilium --version <version>`.
         type: str
         required: true
+      control_plane_cilium_helm_values:
+        description:
+          - Minimal Cilium Helm values reconciled by this role.
+          - >-
+            Defaults retain kube-proxy, use Kubernetes host-scope IPAM and VXLAN,
+            and disable optional Hubble and Envoy components.
+        type: dict
+        required: false
       worker_hosts:
         description:
           - Worker inventory hostnames, resolved from the inventory in group_vars.

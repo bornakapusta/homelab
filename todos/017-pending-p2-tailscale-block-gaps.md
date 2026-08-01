@@ -27,17 +27,17 @@ access silently does not work.
 1. **Already fixed during the review pass:** `tailscale up --authkey=...` had no
    `no_log`, so the auth key was echoed into terminal scrollback with the command.
    `no_log: true` has been added. Listed here for the record.
-2. **The install script is fetched without verification.** Every other remote
-   artefact in this repo is checksum-pinned — two apt signing keys and the Calico
-   manifest, all three verified against upstream. This block does
+2. **The install script is fetched without verification.** The other trust roots
+   in this repo are pinned — two apt signing keys by checksum and the Cilium
+   chart by immutable OCI digest. This block does
    `get_url` → `command: /tmp/tailscale-install.sh` with no `checksum:`, then
    executes it as root. That is the single least-verified thing on the node, and it
    runs with the most privilege.
-3. **Download location and hygiene differ from convention.** The Calico manifest is
-   downloaded to `/root/` with mode `0600` and deleted after use
-   (`roles/control_plane/tasks/main.yml`). This writes to `/tmp` with mode `0755`
-   and never cleans up. `/tmp` is world-readable and world-traversable; a
-   `0755` root-owned script sitting there permanently is avoidable.
+3. **Download location and hygiene differ from convention.** Other transient
+   installation files are mode-restricted and removed after use. This writes to
+   `/tmp` with mode `0755` and never cleans up. `/tmp` is world-readable and
+   world-traversable; a `0755` root-owned script sitting there permanently is
+   avoidable.
 4. **`tailscale_auth_key` has no home.** It is referenced via
    `| default('')` but is not declared in `group_vars/all.yml` or any role
    defaults, so the block silently no-ops. A Tailscale auth key is a credential

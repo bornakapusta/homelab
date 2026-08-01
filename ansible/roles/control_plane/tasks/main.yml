@@ -1,10 +1,49 @@
 ---
-# kubeadm init + Calico CNI + kubeconfig distribution.
+# kubeadm init + Cilium CNI + kubeconfig distribution.
+
+- name: Read the controller Helm version
+  ansible.builtin.command: helm version --short
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  register: __control_plane_helm_version
+  failed_when: false
+  changed_when: false
+
+- name: Normalise the controller Helm version
+  ansible.builtin.set_fact:
+    __control_plane_helm_semver: >-
+      {{ __control_plane_helm_version.stdout
+         | default('v0.0.0', true)
+         | regex_replace('^v', '')
+         | regex_replace('\+.*$', '') }}
+  run_once: true
+
+- name: Controller Helm must support the pinned Kubernetes release
+  ansible.builtin.assert:
+    that:
+      - __control_plane_helm_version.rc == 0
+      - __control_plane_helm_semver is version('4.2.0', '>=')
+      - __control_plane_helm_semver is version('5.0.0', '<')
+    fail_msg: >-
+      Kubernetes 1.36 needs Helm 4.2.x according to Helm's version-skew policy,
+      and this role deliberately fails closed on unreviewed major versions.
+      Install or upgrade Helm on the Ansible controller, then re-run `make
+      cluster`.
+    quiet: true
+  delegate_to: localhost
+  become: false
+  run_once: true
 
 - name: Check whether the cluster is already initialised
   ansible.builtin.stat:
     path: /etc/kubernetes/admin.conf
   register: __control_plane_admin_conf
+
+- name: Verify the Cilium chart before initialising a new cluster
+  ansible.builtin.include_tasks: verify_cilium_chart.yml
+  when: not __control_plane_admin_conf.stat.exists
 
 # --control-plane-endpoint is the important flag: it puts a NAME (not this
 # node's IP) in the certificates, which is what allows extra control-plane
@@ -64,57 +103,162 @@
   delegate_to: localhost
   become: false
 
-# --- Calico CNI ------------------------------------------------------------
-# Nodes stay NotReady until a CNI is running — this is the step that fixes it.
-- name: Check whether Calico is already installed
+# --- Cilium CNI ------------------------------------------------------------
+# Nodes stay NotReady until a CNI is running. Helm runs on the controller using
+# the fetched kubeconfig and the node's direct IP, so initial bootstrap does not
+# depend on laptop DNS already resolving control_plane_endpoint.
+- name: Detect a legacy Calico installation
   ansible.builtin.command: kubectl -n kube-system get daemonset calico-node
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  register: __control_plane_calico_present
+  register: __control_plane_legacy_calico
   failed_when: false
   changed_when: false
 
-- name: Install Calico
-  when: __control_plane_calico_present.rc != 0
+- name: Refuse an unsafe in-place CNI replacement
+  ansible.builtin.assert:
+    that:
+      - __control_plane_legacy_calico.rc != 0
+    fail_msg: >-
+      This cluster already runs Calico. Installing Cilium beside another CNI
+      can strand pods and leave conflicting host routes. For this pre-workload
+      homelab, reset every node as documented in this role's README and rebuild;
+      use Cilium's migration procedure if the cluster contains data to preserve.
+    quiet: true
+
+- name: Read the current Cilium Helm release
+  ansible.builtin.command:
+    argv:
+      - helm
+      - list
+      - --namespace
+      - kube-system
+      - --filter
+      - ^cilium$
+      - --output
+      - json
+      - --kubeconfig
+      - "{{ playbook_dir }}/kubeconfig"
+      - --kube-apiserver
+      - "https://{{ ansible_host }}:6443"
+  delegate_to: localhost
+  become: false
+  register: __control_plane_cilium_releases
+  changed_when: false
+
+- name: Select the current Cilium release
+  ansible.builtin.set_fact:
+    __control_plane_cilium_release: >-
+      {{ (__control_plane_cilium_releases.stdout | from_json | first)
+         if (__control_plane_cilium_releases.stdout | from_json | length > 0)
+         else {} }}
+
+- name: Read the current Cilium user-supplied values
+  ansible.builtin.command:
+    argv:
+      - helm
+      - get
+      - values
+      - cilium
+      - --namespace
+      - kube-system
+      - --output
+      - json
+      - --kubeconfig
+      - "{{ playbook_dir }}/kubeconfig"
+      - --kube-apiserver
+      - "https://{{ ansible_host }}:6443"
+  delegate_to: localhost
+  become: false
+  when: __control_plane_cilium_release | length > 0
+  register: __control_plane_cilium_values_raw
+  failed_when: false
+  changed_when: false
+
+- name: Select the current Cilium values
+  ansible.builtin.set_fact:
+    __control_plane_cilium_current_values: >-
+      {{ (__control_plane_cilium_values_raw.stdout | from_json)
+         if (__control_plane_cilium_values_raw.rc | default(1) == 0
+             and __control_plane_cilium_values_raw.stdout | default('') | length > 0)
+         else {} }}
+
+- name: Decide whether Cilium needs reconciliation
+  ansible.builtin.set_fact:
+    __control_plane_cilium_needs_reconcile: >-
+      {{ __control_plane_cilium_release.status | default('') != 'deployed'
+         or __control_plane_cilium_release.chart | default('') != 'cilium-' ~ cilium_version
+         or __control_plane_cilium_current_values != control_plane_cilium_helm_values }}
+
+- name: Reconcile the Cilium Helm release
+  when: __control_plane_cilium_needs_reconcile
   block:
-    - name: Download the Calico manifest
-      ansible.builtin.get_url:
-        url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml"
-        dest: /root/calico.yaml
+    - name: Verify the Cilium chart before reconciling an existing cluster
+      ansible.builtin.include_tasks: verify_cilium_chart.yml
+      when: __control_plane_admin_conf.stat.exists
+
+    - name: Create a temporary directory for Cilium values
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: cilium-values-
+      delegate_to: localhost
+      become: false
+      register: __control_plane_cilium_values_dir
+
+    - name: Render the minimal Cilium values
+      ansible.builtin.copy:
+        dest: "{{ __control_plane_cilium_values_dir.path }}/values.yml"
+        content: |
+          {{ __control_plane_managed_header }}
+          # Temporary Helm values; do not edit.
+          {{ control_plane_cilium_helm_values | to_nice_yaml(indent=2) }}
         mode: "0600"
-        checksum: "sha256:{{ calico_manifest_sha256 }}"
+        backup: true
+      delegate_to: localhost
+      become: false
 
-    # Calico defaults to 192.168.0.0/16, which commonly collides with home
-    # LANs, so we point it at our pod_cidr instead. These two edits uncomment
-    # the CALICO_IPV4POOL_CIDR env var.
-    - name: Uncomment the pod CIDR env var
-      ansible.builtin.replace:
-        path: /root/calico.yaml
-        regexp: '^(\s*)#\s*(- name: CALICO_IPV4POOL_CIDR)\s*$'
-        replace: '\1\2'
-
-    - name: Set the pod CIDR to match kubeadm
-      ansible.builtin.replace:
-        path: /root/calico.yaml
-        regexp: '^(\s*)#\s*value:\s*"192\.168\.0\.0/16"\s*$'
-        replace: '\1  value: "{{ pod_cidr }}"'
-
-    - name: Confirm the CIDR was patched
-      ansible.builtin.command: grep -A1 'CALICO_IPV4POOL_CIDR' /root/calico.yaml
-      register: __control_plane_cidr_check
-      changed_when: false
-      failed_when: pod_cidr not in __control_plane_cidr_check.stdout
-
-    - name: Apply Calico
-      ansible.builtin.command: kubectl apply -f /root/calico.yaml
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
+    - name: Install or upgrade Cilium from its pinned OCI digest
+      ansible.builtin.command:
+        argv:
+          - helm
+          - upgrade
+          - --install
+          - cilium
+          - "oci://quay.io/cilium/charts/cilium@sha256:{{ cilium_chart_sha256 }}"
+          - --namespace
+          - kube-system
+          - --values
+          - "{{ __control_plane_cilium_values_dir.path }}/values.yml"
+          - --rollback-on-failure
+          - --timeout
+          - 10m
+          - --history-max
+          - "5"
+          - --kubeconfig
+          - "{{ playbook_dir }}/kubeconfig"
+          - --kube-apiserver
+          - "https://{{ ansible_host }}:6443"
+      delegate_to: localhost
+      become: false
       changed_when: true
 
-    - name: Remove downloaded manifest
+  always:
+    - name: Remove the temporary Cilium values
       ansible.builtin.file:
-        path: /root/calico.yaml
+        path: "{{ __control_plane_cilium_values_dir.path }}"
         state: absent
+      delegate_to: localhost
+      become: false
+      when:
+        - __control_plane_cilium_values_dir is defined
+        - __control_plane_cilium_values_dir.path is defined
+
+- name: Wait for the Cilium agent on this node
+  ansible.builtin.command: >
+    kubectl -n kube-system rollout status daemonset/cilium --timeout=300s
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
 
 - name: Wait for this node to become Ready
   ansible.builtin.command: >

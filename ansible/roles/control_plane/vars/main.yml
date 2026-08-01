@@ -1,0 +1,16 @@
+---
+# Role constants. Not in defaults/ on purpose: these are not knobs, they are
+# fixed values the role needs, and vars/ sits high enough in precedence that a
+# stray group_vars entry cannot silently redefine them.
+
+# Provenance header stamped into every file this role writes.
+#
+# NOT `ansible_managed`: that variable is injected by the `template` action
+# plugin only, so it is undefined inside `copy: content:` — which is how this
+# role writes its temporary Helm values. Reading DEFAULT_MANAGED_STR from config
+# yields exactly the same string in a context where it actually resolves.
+#
+# Deliberately carries no date or hostname. A timestamp here would make every
+# file differ on every run, so the role would report a change forever and real
+# changes would be impossible to spot.
+__control_plane_managed_header: "{{ lookup('config', 'DEFAULT_MANAGED_STR') | comment }}"

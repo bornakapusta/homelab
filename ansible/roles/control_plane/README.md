@@ -1,6 +1,6 @@
 # control_plane
 
-`kubeadm init`, Calico CNI, kubeconfig distribution, and worker join-token
+`kubeadm init`, Cilium CNI, kubeconfig distribution, and worker join-token
 generation.
 
 **Unit of automation:** the cluster's control plane. **Outcome:** a Ready
@@ -15,7 +15,7 @@ laptop, and a join token published for the workers.
 
 | Property | Value |
 |---|---|
-| Idempotent | **True** — skips init and CNI install when already present |
+| Idempotent | **True** — skips init and reconciles Cilium only on version/value drift |
 | Atomic | **False** — a failure after `kubeadm init` leaves a live cluster |
 | Check mode | **Partial** — see below |
 
@@ -23,8 +23,37 @@ laptop, and a join token published for the workers.
 
 Declared and validated in [`meta/argument_specs.yml`](meta/argument_specs.yml).
 
-Required: `admin_user`, `control_plane_endpoint`, `pod_cidr`, `calico_version`,
-`calico_manifest_sha256`, `worker_hosts`.
+Required: `admin_user`, `control_plane_endpoint`, `pod_cidr`, `cilium_version`,
+`cilium_chart_sha256`, `worker_hosts`.
+
+Optional: `control_plane_cilium_helm_values` defaults to the deliberately small
+bootstrap profile described below.
+
+## Cilium bootstrap profile
+
+The controller needs Helm 4.2.x, the first Helm 4 minor that officially
+supports the pinned Kubernetes 1.36 release. The role installs Cilium from its
+digest-pinned OCI chart and only runs `helm upgrade --install` when the release
+version, status, or user-supplied values differ. Failed changes use Helm's
+`--rollback-on-failure`. Before an install or upgrade, the role verifies that
+the pinned digest's chart metadata matches `cilium_version`; Helm itself ignores
+`--version` when an OCI digest is supplied. On a fresh cluster this verification
+runs before `kubeadm init`, so an invalid or unavailable chart leaves no partial
+cluster state behind.
+
+The upper bound is intentional: a future Helm major can rename automation
+flags or change release behavior, so the role fails closed until that major has
+been reviewed.
+
+The default profile keeps Kubernetes' `kube-proxy`, uses the PodCIDRs assigned
+by kubeadm (`ipam.mode=kubernetes`), and uses a VXLAN overlay. Hubble, Envoy,
+and L7 policy are disabled for the initial homelab footprint; standard
+Kubernetes NetworkPolicy remains enabled. The Cilium operator starts with one
+replica because the CNI is installed before either worker joins.
+
+The role refuses to install Cilium beside an existing Calico DaemonSet. A
+pre-workload cluster should be reset and rebuilt; a cluster containing data
+needs Cilium's documented CNI migration procedure.
 
 ### Outbound value
 

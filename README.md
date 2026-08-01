@@ -20,6 +20,7 @@ On your **laptop**:
 
 ```bash
 sudo apt install ansible          # or: brew install ansible / pipx install ansible
+brew install helm                 # macOS; use `brew upgrade helm` for Helm 4.2.x
 ssh-keygen -t ed25519             # if you don't already have a key
 ```
 
@@ -69,7 +70,7 @@ ansible-playbook cluster.yml
 ```
 
 - `kubeadm init` on the control-plane node (with `--control-plane-endpoint`, so you can grow to HA later without rebuilding)
-- installs **Calico** CNI, with the pod CIDR patched to match
+- installs the pinned **Cilium** CNI chart with Kubernetes PodCIDR IPAM
 - joins the workers
 - fetches the kubeconfig to `./kubeconfig` on your laptop
 
@@ -80,7 +81,7 @@ export KUBECONFIG=$PWD/kubeconfig
 kubectl get nodes -o wide
 ```
 
-All nodes should reach `Ready` within a minute or two of Calico starting.
+All nodes should reach `Ready` within a minute or two of Cilium starting.
 
 ---
 
@@ -101,9 +102,11 @@ kubectl taint nodes node-1 node-role.kubernetes.io/control-plane-
 breaks the cluster. Use 1 (now) or 3 (Stage B, with kube-vip).
 
 **ufw + Kubernetes:** the playbook sets `DEFAULT_FORWARD_POLICY=ACCEPT` and fully trusts
-traffic between your node IPs. Without both, pod networking breaks in confusing ways.
+traffic between your node IPs. This includes Cilium's VXLAN (`8472/udp`) and health
+traffic (`4240/tcp` and ICMP). Without that peer trust, pod networking breaks in
+confusing ways.
 
-**Versions:** `group_vars/all.yml` pins Kubernetes and Calico. Check the current releases
+**Versions:** `group_vars/all.yml` pins Kubernetes and Cilium. Check the current releases
 before your first run — the defaults were correct as of July 2026 but move on.
 
 ---
@@ -120,7 +123,7 @@ These come after you have a working cluster. See `PROJECT-PLAN.md` for the full 
 
 | Symptom | Cause |
 |---|---|
-| Nodes stuck `NotReady` | CNI not running yet — `kubectl -n kube-system get pods` |
+| Nodes stuck `NotReady` | Cilium not running yet — `kubectl -n kube-system get pods -l k8s-app=cilium` |
 | `kubelet` crash-looping | Usually containerd cgroup mismatch — re-run `site.yml` |
 | Pods can't reach each other | ufw forward policy, or pod CIDR clashing with your LAN |
 | Installer can't see the disk | BIOS `SATA Operation` set to RAID — change to **AHCI** |

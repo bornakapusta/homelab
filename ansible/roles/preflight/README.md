@@ -34,7 +34,7 @@ point of the role, so they stay in charge.
 
 - Controller `ansible-core` meets the floor the roles are written against
 - Every required variable in `group_vars/all.yml` is set and non-empty
-- All three artefact sha256 digests are present and well-formed
+- Both apt-key checksums and the Cilium OCI chart digest are present and well-formed
 - `ssh_allowed_users` contains both accounts, **and** the account Ansible is
   currently connected as — dropping either locks you out on the next sshd reload
 - `control_plane_endpoint` is a DNS name, not an IP

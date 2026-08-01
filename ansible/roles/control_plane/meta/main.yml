@@ -1,5 +1,5 @@
 ---
-# kubeadm init, Calico CNI, kubeconfig distribution, join-command generation
+# kubeadm init, Cilium CNI, kubeconfig distribution, join-command generation
 #
 # No galaxy_info block: these roles are local to this repo and never published
 # to Galaxy, so the Galaxy metadata schema does not apply. The ansible-core

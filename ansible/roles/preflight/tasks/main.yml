@@ -26,7 +26,7 @@
       - kubernetes_minor is defined and kubernetes_minor | length > 0
       - kubernetes_apt_version is defined and kubernetes_apt_version | length > 0
       - containerd_apt_version is defined and containerd_apt_version | length > 0
-      - calico_version is defined and calico_version | length > 0
+      - cilium_version is defined and cilium_version | length > 0
       - ssh_allowed_from | default([]) | length > 0
       - ssh_allowed_users | default([]) | length > 0
     fail_msg: A required variable in group_vars/all.yml is missing or empty.
@@ -35,13 +35,14 @@
 - name: Artefact digests must be pinned
   ansible.builtin.assert:
     that:
-      - kubernetes_key_sha256 | default('') | length == 64
-      - docker_key_sha256 | default('') | length == 64
-      - calico_manifest_sha256 | default('') | length == 64
+      - kubernetes_key_sha256 | default('') is match('^[0-9a-f]{64}$')
+      - docker_key_sha256 | default('') is match('^[0-9a-f]{64}$')
+      - cilium_chart_sha256 | default('') is match('^[0-9a-f]{64}$')
     fail_msg: >-
       One of the sha256 digests in group_vars/all.yml is missing or malformed.
-      These authenticate two apt signing keys and the CNI manifest — do not
-      remove them. Regenerate with: curl -fsSL <url> | sha256sum
+      These pin two apt signing keys and the Cilium OCI chart — do not remove
+      them. Regenerate keys with sha256sum and obtain the chart digest with
+      `helm pull` as documented beside cilium_chart_sha256.
     quiet: true
 
 - name: The automation user must be permitted by sshd
@@ -86,8 +87,8 @@
     quiet: true
 
 # Full subnet-overlap maths would need the ansible.utils collection. This
-# catches the specific documented footgun: Calico's 192.168.0.0/16 default
-# against a 192.168.x home LAN. Widen it if your LAN is not 192.168.x.
+# catches the documented footgun of selecting a pod range that overlaps this
+# homelab's 192.168.x LAN. Widen it if your LAN is not 192.168.x.
 - name: Pod CIDR must not collide with a 192.168.x home LAN
   ansible.builtin.assert:
     that:

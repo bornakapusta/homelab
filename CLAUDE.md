@@ -74,7 +74,7 @@ Order in `site.yml` matters — see the note under `automation_user`.
 | `automation_user` | dedicated `ansible` account, its own SSH key, validated sudoers drop-in |
 | `hardening` | SSH lockdown (drop-in config), ufw firewall, unattended security upgrades (auto-reboot disabled) |
 | `kubernetes_node` | swap off, kernel modules (overlay, br_netfilter), sysctls, containerd (from Docker repo, SystemdCgroup=true, pinned), kubelet/kubeadm/kubectl pinned+held, kubelet `--node-ip` pinned |
-| `control_plane` | kubeadm init, Calico CNI (pod CIDR patched), kubeconfig fetch, generate join command |
+| `control_plane` | kubeadm init, digest-pinned Cilium CNI, kubeconfig fetch, generate join command |
 | `worker` | join cluster using token from control_plane, wait for registration, label node |
 
 `automation_user` **must** run before `hardening`: the account has to exist and be
@@ -126,7 +126,7 @@ is a deliberate 4-step rollout documented in `group_vars/all.yml`.
 - Handlers live in each role's `handlers/main.yml` — hardening has `Reload sshd`/`Reload ufw`; kubernetes_node has `Reload sysctl`/`Restart containerd`/`Restart kubelet`
 - The kubeconfig is fetched to `ansible/kubeconfig` (gitignored)
 - `autoinstall/user-data` contains secrets and is gitignored; only `user-data.example` is tracked
-- Versions **and their sha256 digests** are pinned together in `group_vars/all.yml`. The two apt signing keys and the Calico manifest are checksum-verified; never drop those `checksum:` lines. Regenerate a digest when you bump its version (`curl -fsSL <url> | sha256sum`). The k8s `Release.key` digest is stable across minor bumps.
+- Versions **and their sha256 digests** are pinned together in `group_vars/all.yml`. The two apt signing keys are checksum-verified and the Cilium OCI chart is installed by digest; never weaken those checks. Regenerate key digests with `curl -fsSL <url> | sha256sum`, and obtain the chart digest with `helm pull oci://quay.io/cilium/charts/cilium --version <version>`. The k8s `Release.key` digest is stable across minor bumps.
 - Anything writing to `/etc/sudoers.d/` must use `validate: visudo -cf %s` — a malformed file makes `sudo` unusable on every node at once
 - Any task whose command line or output carries a secret gets `no_log: true`. Prefer removing the secret instead where possible (e.g. `kubeadm init --skip-token-print`), since `no_log` censors failures too
 - **Variable naming is enforced by lint, not convention.** Registered and `set_fact` variables are `__<role>_`-prefixed (internal); role defaults are `<role>_`-prefixed. The one intentional exception is `control_plane_join_command`, a published output of `control_plane` read by `worker` through `hostvars` — interface, not internal. Ansible has no namespaces and `site.yml` runs all five node roles in a single play, so they share one namespace for the whole run.
@@ -136,3 +136,13 @@ is a deliberate 4-step rollout documented in `group_vars/all.yml`.
 ## Not yet implemented
 
 `clusters/` (Argo CD app-of-apps), `images/` (agent sandbox image), HA control plane (kube-vip). See `docs/PROJECT-PLAN.md` for the roadmap.
+
+<!-- OPENWIKI:START -->
+
+## OpenWiki
+
+This repository uses OpenWiki for recurring code documentation. Start with `openwiki/quickstart.md`, then follow its links to architecture, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
+
+The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
+
+<!-- OPENWIKI:END -->

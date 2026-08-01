@@ -1,0 +1,28 @@
+---
+- name: Read the pinned Cilium chart metadata
+  ansible.builtin.command:
+    argv:
+      - helm
+      - show
+      - chart
+      - "oci://quay.io/cilium/charts/cilium@sha256:{{ cilium_chart_sha256 }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  register: __control_plane_cilium_chart_metadata_raw
+  changed_when: false
+
+- name: Verify the pinned Cilium chart version
+  ansible.builtin.assert:
+    that:
+      - (__control_plane_cilium_chart_metadata_raw.stdout | from_yaml).name == 'cilium'
+      - (__control_plane_cilium_chart_metadata_raw.stdout | from_yaml).version == cilium_version
+    fail_msg: >-
+      cilium_chart_sha256 does not resolve to the Cilium {{ cilium_version }}
+      chart. Update cilium_version and cilium_chart_sha256 together; Helm
+      ignores --version when an OCI digest is supplied.
+    quiet: true
+  delegate_to: localhost
+  become: false
+  run_once: true

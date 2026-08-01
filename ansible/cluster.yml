@@ -36,6 +36,13 @@
   hosts: control_plane
   become: true
   tasks:
+    - name: Wait for Cilium on every joined node
+      ansible.builtin.command: >
+        kubectl -n kube-system rollout status daemonset/cilium --timeout=300s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      changed_when: false
+
     - name: Get nodes
       ansible.builtin.command: kubectl get nodes -o wide
       environment:

@@ -61,7 +61,7 @@
 
 <header>
   <h1>Homelab Agent-Cluster — Project Plan</h1>
-  <div class="meta">Owner: Borna · Last updated: July 18, 2026 · Linux comfort: 3/5</div>
+  <div class="meta">Owner: Borna · Last updated: July 31, 2026 · Linux comfort: 3/5</div>
   <p class="lead">A 3-node Kubernetes homelab that hosts your own apps (GitOps) <strong>and</strong> runs AI coding agents in pre-warmed, disposable environments, all viewable through herdr.</p>
 </header>
 
@@ -128,7 +128,7 @@
     <tr><td>Hardware</td><td>3× OptiPlex 7050 (i5-7500T, 16 GB, 256 GB)</td><td>Enough for a learning cluster; SSD is the limit</td></tr>
     <tr><td>Node OS</td><td><strong>Ubuntu Server LTS 24.04</strong></td><td>5-yr support, no SELinux friction, most tutorials</td></tr>
     <tr><td>Kubernetes</td><td><strong>kubeadm</strong> (upstream/vanilla)</td><td>Learn the real thing; start 1 CP + 2 workers → 3 CP + kube-vip</td></tr>
-    <tr><td>Runtime / CNI</td><td>containerd · Calico</td><td>Standard, beginner-friendly</td></tr>
+    <tr><td>Runtime / CNI</td><td>containerd · Cilium</td><td>Upstream Kubernetes, eBPF networking</td></tr>
     <tr><td>Storage</td><td>local-path (→ Longhorn later)</td><td>Simple start; watch SSD space</td></tr>
     <tr><td>Ingress / LB</td><td>ingress-nginx + <strong>MetalLB</strong></td><td>Bare-metal LoadBalancer + ingress</td></tr>
     <tr><td>Hostname access</td><td>Local DNS (AdGuard/dnsmasq wildcard) → ingress IP; ExternalDNS + cert-manager; Tailscale Split DNS</td><td>Reach apps by name over HTTPS (the "internal CDN" ask — really DNS+ingress)</td></tr>
@@ -179,7 +179,7 @@
 
   <div class="card"><h3>Phase 2 — kubeadm</h3>
     <div class="goal">A real cluster.</div>
-    <ul><li>containerd, swap off, sysctls</li><li><code>kubeadm init</code> (1 CP) + join 2 workers</li><li>Calico CNI; k9s on laptop</li><li>Later: 3 CP + kube-vip (HA)</li></ul>
+    <ul><li>containerd, swap off, sysctls</li><li><code>kubeadm init</code> (1 CP) + join 2 workers</li><li>Cilium CNI; k9s on laptop</li><li>Later: 3 CP + kube-vip (HA)</li></ul>
     <div class="done">Done: all nodes Ready</div></div>
 
   <div class="card"><h3>Phase 2.5 — Batteries</h3>
@@ -282,7 +282,7 @@
     <tr><td><strong>Namespace</strong></td><td>Logical partition for grouping/limiting workloads.</td></tr>
     <tr><td><strong>Deployment</strong></td><td>Keeps N identical pods running.</td></tr>
     <tr><td><strong>Service / Ingress / LoadBalancer</strong></td><td>How traffic reaches pods (MetalLB gives real LAN IPs on bare metal).</td></tr>
-    <tr><td><strong>CNI</strong></td><td>The pod network plugin (Calico).</td></tr>
+    <tr><td><strong>CNI</strong></td><td>The pod network plugin (Cilium).</td></tr>
     <tr><td><strong>etcd</strong></td><td>The cluster's database (quorum needs an odd number of control-plane nodes).</td></tr>
     <tr><td><strong>requests / limits</strong></td><td>What a pod reserves vs its hard ceiling (the scheduler places by <em>requests</em>).</td></tr>
     <tr><td><strong>taint / toleration</strong></td><td>Keep pods off a node unless they explicitly tolerate it.</td></tr>

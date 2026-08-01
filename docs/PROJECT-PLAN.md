@@ -1,6 +1,6 @@
 # Homelab Agent-Cluster — Project Plan & Guidelines
 
-*Owner: Borna · Last updated: July 18, 2026*
+*Owner: Borna · Last updated: July 31, 2026*
 
 This is the master plan for building a 3-node Kubernetes homelab that hosts your own apps (GitOps) **and** runs AI coding agents in pre-warmed, disposable environments, all viewable through herdr.
 
@@ -40,7 +40,7 @@ It consolidates the decisions and rationale from three companion docs:
 | Node OS | **Ubuntu Server LTS 24.04** | 5-yr support, no SELinux friction, most tutorials |
 | Kubernetes | **kubeadm** (upstream) | Learn the real thing; start 1 CP + 2 workers → 3 CP + kube-vip |
 | Runtime | containerd | Standard |
-| CNI | Calico (→ Cilium optional) | Beginner-friendly, well documented |
+| CNI | Cilium | Kubernetes 1.36 support, NetworkPolicy, optional Hubble later |
 | Storage | local-path (→ Longhorn later) | Simple start; watch SSD space |
 | Ingress / LB | ingress-nginx + **MetalLB** | Bare-metal LoadBalancer + ingress |
 | Hostname access | Local DNS (**AdGuard Home**/dnsmasq wildcard) → ingress IP; **ExternalDNS** + **cert-manager**; **Tailscale Split DNS** remote | Reach apps by name over HTTPS (the "internal CDN" ask — really DNS+ingress) |
@@ -105,7 +105,7 @@ In one paragraph: your laptop runs **herdr** and reaches the cluster over **Tail
 
 ### Phase 2 — kubeadm cluster (single control-plane first)
 - [ ] `kubeadm init` on node 1; join nodes 2 & 3 as workers.
-- [ ] Install **Calico** CNI; nodes go `Ready`.
+- [ ] Install the pinned **Cilium** CNI chart; nodes go `Ready`.
 - [ ] kubeconfig + `kubectl` + `k9s` on laptop; deploy a throwaway nginx.
 - [ ] *(Later)* rebuild/expand to 3 control-plane + **kube-vip** for HA.
 - **Done:** all nodes `Ready`; a test pod runs.
@@ -218,7 +218,7 @@ homelab/
 - **Namespace** — a logical partition for grouping/limiting workloads.
 - **Deployment** — keeps N identical pods running.
 - **Service / Ingress / LoadBalancer** — how traffic reaches pods (MetalLB gives real LAN IPs on bare metal).
-- **CNI** — the pod network plugin (Calico).
+- **CNI** — the pod network plugin (Cilium).
 - **etcd** — the cluster's database (quorum needs an odd number of control-plane nodes).
 - **requests/limits** — what a pod reserves vs its hard ceiling (the scheduler places by *requests*).
 - **taint/toleration** — keep pods off a node unless they explicitly tolerate it.

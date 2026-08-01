@@ -3,4 +3,31 @@
 # admin_user: (required)
 # control_plane_endpoint: (required)
 # pod_cidr: (required)
-# calico_version: (required)
+# cilium_version: (required)
+# cilium_chart_sha256: (required)
+
+# Keep the bootstrap CNI deliberately small. kube-proxy continues to implement
+# Services, Kubernetes assigns each node's PodCIDR, and Cilium supplies only the
+# VXLAN pod network plus standard NetworkPolicy enforcement. Hubble and the L7
+# Envoy datapath can be enabled later through GitOps if a real need appears.
+#
+# One operator replica is intentional during Stage A: Cilium is installed before
+# the workers join, so only the tainted control-plane node is available while
+# Helm waits for the initial deployment to become ready.
+control_plane_cilium_helm_values:
+  envoy:
+    enabled: false
+  hubble:
+    enabled: false
+  ipam:
+    mode: kubernetes
+  k8s:
+    requireIPv4PodCIDR: true
+  k8sNetworkPolicy:
+    enabled: true
+  kubeProxyReplacement: false
+  l7Proxy: false
+  operator:
+    replicas: 1
+  routingMode: tunnel
+  tunnelProtocol: vxlan

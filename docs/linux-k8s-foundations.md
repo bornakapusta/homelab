@@ -42,7 +42,7 @@ Because your stated goal is **"learn Kubernetes,"** and there the packaging that
 ### What you're signing up for (the honest cost)
 kubeadm is "Kubernetes the hard way (lite)." Versus k3s you take on:
 
-- Installing a **CNI** yourself (recommended: **Cilium** for modern eBPF, or **Calico** for the most beginner tutorials — start with Calico).
+- Installing the selected **Cilium CNI** yourself for pod networking and NetworkPolicy.
 - Installing **storage** yourself (**local-path-provisioner** to start; Longhorn later).
 - Installing **ingress + bare-metal load balancer** yourself (**ingress-nginx** + **MetalLB** — k3s gave you Traefik/ServiceLB for free).
 - **HA control plane needs a virtual IP** in front of the API servers (**kube-vip** is the homelab standard). This is the single biggest added complexity.
@@ -81,7 +81,7 @@ Apply this identically on all three nodes (automate later with Ansible — itsel
 
 ### 3.3 Firewall
 - Use **ufw**, **default deny incoming**, allow outgoing.
-- **Trust the three node IPs among themselves** — Kubernetes needs many inter-node ports open (API `6443`, etcd `2379-2380`, kubelet `10250`, `kube-scheduler`/`controller` `10257`/`10259`, NodePorts `30000-32767`, plus CNI ports: Calico BGP `179` / VXLAN `4789`, or Cilium's `8472`/`4240`). Simplest robust rule: `ufw allow from <each node IP>` to fully trust node-to-node, and only expose SSH (from LAN/tailnet) and your ingress ports to everything else.
+- **Trust the three node IPs among themselves** — Kubernetes needs many inter-node ports open (API `6443`, etcd `2379-2380`, kubelet `10250`, `kube-scheduler`/`controller` `10257`/`10259`, NodePorts `30000-32767`, plus Cilium VXLAN `8472/udp`, health `4240/tcp`, and ICMP). Simplest robust rule: `ufw allow from <each node IP>` to fully trust node-to-node, and only expose SSH (from LAN/tailnet) and your ingress ports to everything else.
 - Don't hand-punch every K8s port on the public side — nothing should be public anyway (LAN + Tailscale only).
 
 ### 3.4 Patching
@@ -112,7 +112,7 @@ Single 256 GB NVMe per node. Recommendations:
 Things to fix or add now that we're on kubeadm, so the build is sound:
 
 1. **Control-plane HA needs kube-vip** (or keepalived+haproxy) for the API-server virtual IP. Added to the ladder above — start single-CP, add this at Stage B.
-2. **Pick your stack add-ons deliberately (kubeadm gives you none):** CNI = Calico (start) or Cilium (modern); storage = local-path-provisioner → Longhorn later; ingress = ingress-nginx; bare-metal LB = **MetalLB** (needed for `LoadBalancer` services on your LAN).
+2. **Pick your stack add-ons deliberately (kubeadm gives you none):** CNI = Cilium; storage = local-path-provisioner → Longhorn later; ingress = ingress-nginx; bare-metal LB = **MetalLB** (needed for `LoadBalancer` services on your LAN).
 3. **GitOps from day one.** Keep every manifest in a **git repo** (later: Argo CD or Flux). Makes any rebuild reproducible instead of a from-scratch redo.
 4. **Don't put raw Secrets in git.** Since you're going GitOps, use **SOPS** or **Sealed Secrets** for the Anthropic/OpenAI keys. Plain `kubectl` Secrets are fine while local-only, but adopt encryption before anything hits git.
 5. **etcd backups.** Learn `etcdctl snapshot save` and schedule it (a CronJob or a host cron). This is a core reason to run kubeadm — actually practice restore once.
@@ -123,7 +123,7 @@ Things to fix or add now that we're on kubeadm, so the build is sound:
 10. **Node reboots are manual & drained** (see 3.4) — add "drain → reboot → uncordon" to your operating habits.
 
 ### Revised phase impact (supersedes roadmap Phases 2–3)
-- **Phase 2** becomes: install containerd + kubeadm/kubelet/kubectl, disable swap, kernel networking sysctls, `kubeadm init` (single CP first), install **CNI (Calico)**.
+- **Phase 2** becomes: install containerd + kubeadm/kubelet/kubectl, disable swap, kernel networking sysctls, `kubeadm init` (single CP first), install **Cilium CNI**.
 - **New Phase 2.5:** install **MetalLB** + **ingress-nginx** + **local-path-provisioner** (the batteries k3s used to include).
 - **Phase 3** adds: etcd snapshot backups, GitOps repo, SOPS/Sealed Secrets. HA (3× CP + kube-vip) is an explicit later step, not the starting point.
 
@@ -300,7 +300,7 @@ Quick terminology fix: what you want — typing `myapp.lab.example` instead of `
 | Topology | **One physical cluster**; separate apps vs agents via namespaces + node taints + quotas + NetworkPolicies. **No physical two-cluster split.** vCluster later if you want true cluster isolation. |
 | GitOps | **Argo CD** (app-of-apps) managing both platform + hosted apps |
 | Container runtime | **containerd** |
-| CNI | **Calico** (start) → optionally Cilium |
+| CNI | **Cilium** |
 | Storage | **local-path-provisioner** → Longhorn later |
 | Ingress / LB | **ingress-nginx** + **MetalLB** |
 | Hostname access (DNS) | Local resolver (**AdGuard Home**/dnsmasq wildcard, or Pi-hole) → ingress IP; **ExternalDNS** to automate; **cert-manager** for TLS; **Tailscale Split DNS** for remote. *(This is your "internal CDN" ask — it's DNS+ingress, not a CDN.)* |
