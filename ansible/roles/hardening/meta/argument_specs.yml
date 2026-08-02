@@ -25,9 +25,33 @@ argument_specs:
       ssh_allowed_from:
         description:
           - Source networks in CIDR form allowed to reach port 22.
-          - Also scopes the ingress 80/443 rules.
         type: list
         elements: str
+        required: true
+      ingress_allowed_from:
+        description:
+          - Source networks in CIDR form allowed to reach ingress ports 80 and 443.
+          - Separate from SSH so a management VPN does not expose applications.
+        type: list
+        elements: str
+        required: true
+      tailscale_enabled:
+        description:
+          - Whether to install tailnet-specific firewall rules.
+          - When enabled, SSH is bound to the tailscale0 input interface.
+        type: bool
+        required: true
+      tailscale_cidr:
+        description:
+          - Canonical Tailscale IPv4 range used for management-only SSH.
+          - Preflight validates the 100.64.0.0/10 boundary.
+        type: str
+        required: true
+      tailscale_udp_port:
+        description:
+          - UDP transport port allowed for direct Tailscale peer connections.
+          - Preflight validates that it is in the range 1 through 65535.
+        type: int
         required: true
       node_ips:
         description:

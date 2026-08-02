@@ -27,9 +27,35 @@
       - kubernetes_apt_version is defined and kubernetes_apt_version | length > 0
       - containerd_apt_version is defined and containerd_apt_version | length > 0
       - cilium_version is defined and cilium_version | length > 0
+      - tailscale_enabled is defined
+      - tailscale_cidr is defined and tailscale_cidr | length > 0
+      - tailscale_udp_port is defined
+      - tailscale_apt_version is defined and tailscale_apt_version | length > 0
+      - tailscale_key_sha256 is defined and tailscale_key_sha256 | length > 0
       - ssh_allowed_from | default([]) | length > 0
+      - ingress_allowed_from | default([]) | length > 0
       - ssh_allowed_users | default([]) | length > 0
     fail_msg: A required variable in group_vars/all.yml is missing or empty.
+    quiet: true
+
+- name: Tailscale management access must be explicit and firewall-safe
+  ansible.builtin.assert:
+    that:
+      - tailscale_enabled | default(none) is boolean
+      - tailscale_cidr | default('') == '100.64.0.0/10'
+      - tailscale_udp_port | default(0) is integer
+      - (tailscale_udp_port | default(0) | int) >= 1
+      - (tailscale_udp_port | default(0) | int) <= 65535
+      - tailscale_apt_version | default('') | length > 0
+      - tailscale_key_sha256 | default('') is match('^[0-9a-f]{64}$')
+      - (tailscale_cidr | default('')) in ssh_allowed_from
+      - (tailscale_cidr | default('')) not in ingress_allowed_from
+    fail_msg: >-
+      Tailscale settings are incomplete or unsafe. Use the canonical
+      100.64.0.0/10 boundary, a UDP port from 1 through 65535, an exact package
+      version, and a 64-character signing-key digest. Keep the tailnet in
+      ssh_allowed_from but out of ingress_allowed_from so it remains
+      management-only.
     quiet: true
 
 - name: Artefact digests must be pinned

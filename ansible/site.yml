@@ -39,5 +39,10 @@
     - role: hardening
       tags: [hardening]
 
+    # UFW must be active before Tailscale enrols. The Tailscale role disables
+    # its own netfilter management so hardening remains the firewall authority.
+    - role: tailscale
+      tags: [tailscale]
+
     - role: kubernetes_node
       tags: [kubernetes]

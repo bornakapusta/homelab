@@ -1,0 +1,2 @@
+# Bootstrap credentials stay controller-local even when encrypted with Vault.
+vars/*.vault

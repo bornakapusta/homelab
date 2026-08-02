@@ -84,15 +84,61 @@
     src: "{{ item }}"
     port: "22"
     proto: tcp
-  loop: "{{ ssh_allowed_from }}"
+  # The tailnet receives its own interface-bound rule below. Never render its
+  # source CIDR as a generic rule: source-only matching would also trust spoofed
+  # packets that arrive on a LAN interface.
+  loop: "{{ ssh_allowed_from | reject('equalto', tailscale_cidr) | list }}"
 
-- name: Allow HTTP/HTTPS for ingress (LAN only until ingress controller is deployed)
+# Older runs created a source-only tailnet SSH rule. Removing the CIDR from the
+# loop above does not remove that persistent UFW entry, so delete the exact
+# legacy contract before installing the interface-bound replacement.
+- name: Delete the legacy generic tailnet SSH rule
+  community.general.ufw:
+    rule: allow
+    src: "{{ tailscale_cidr }}"
+    port: "22"
+    proto: tcp
+    delete: true
+
+- name: Allow SSH from the tailnet only on tailscale0
+  community.general.ufw:
+    rule: allow
+    interface_in: tailscale0
+    src: "{{ tailscale_cidr }}"
+    port: "22"
+    proto: tcp
+  when: tailscale_enabled | bool
+
+# With Tailscale netfilter management disabled, UFW must admit the daemon's
+# public UDP transport port so peers can establish direct WireGuard paths.
+- name: Allow the Tailscale UDP transport port
+  community.general.ufw:
+    rule: allow
+    port: "{{ tailscale_udp_port }}"
+    proto: udp
+  when: tailscale_enabled | bool
+
+# Removing a source from an Ansible loop does not remove the UFW rules created
+# by an older run. Delete the exact legacy tailnet web rules before managing the
+# current LAN-only ingress set.
+- name: Delete legacy tailnet HTTP and HTTPS rules
+  community.general.ufw:
+    rule: allow
+    src: "{{ tailscale_cidr }}"
+    port: "{{ item }}"
+    proto: tcp
+    delete: true
+  loop:
+    - "80"
+    - "443"
+
+- name: Allow HTTP/HTTPS from approved ingress networks
   community.general.ufw:
     rule: allow
     src: "{{ item.0 }}"
     port: "{{ item.1 }}"
     proto: tcp
-  loop: "{{ ssh_allowed_from | product(['80', '443']) | list }}"
+  loop: "{{ ingress_allowed_from | product(['80', '443']) | list }}"
 
 - name: Enable ufw
   community.general.ufw:

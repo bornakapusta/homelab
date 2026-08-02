@@ -32,9 +32,9 @@ ssh_allowed_users:
 #   2. `make nodes` as admin_user — creates the automation user, allows both in sshd
 #   3. verify by hand:  ssh -i ~/.ssh/homelab_ansible ansible@node-1 sudo -n true
 #   4. ONLY THEN swap the two lines below and re-run `make ping`
-ansible_user: "{{ admin_user }}"
-# ansible_user: "{{ ansible_service_user }}"
-# ansible_ssh_private_key_file: ~/.ssh/homelab_ansible
+# ansible_user: "{{ admin_user }}"
+ansible_user: "{{ ansible_service_user }}"
+ansible_ssh_private_key_file: ~/.ssh/homelab_ansible
 
 # --- networking ------------------------------------------------------------
 # Derived from inventory ansible_host values — single source of truth.
@@ -62,12 +62,24 @@ control_plane_host: "{{ groups['control_plane'] | first }}"
 worker_hosts: "{{ groups['workers'] | default([]) }}"
 cluster_hosts: "{{ groups['k8s_cluster'] | default([]) }}"
 
-# Where SSH is allowed from (your LAN, and later your tailnet 100.64.0.0/10).
-# Also used for the ingress 80/443 rules and to scope the automation key's
-# from= restriction.
+# Tailscale is a management path only. The auth key is a one-time bootstrap
+# secret loaded explicitly from vars/tailscale.vault; it never belongs in
+# this plaintext file. Once a node is enrolled, normal runs need no auth key.
+tailscale_enabled: true
+tailscale_cidr: 100.64.0.0/10
+tailscale_udp_port: 41641
+
+# Where SSH is allowed from. This also scopes the automation key's from=
+# restriction, so the automation_user role must be re-run after this list
+# changes.
 ssh_allowed_from:
   - 192.168.178.0/24
-  # - 100.64.0.0/10
+  - "{{ tailscale_cidr }}"
+
+# Application ingress stays LAN-only. Keeping this separate prevents enabling
+# remote administration from silently exposing future HTTP services tailnet-wide.
+ingress_allowed_from:
+  - 192.168.178.0/24
 
 # MUST be a DNS name that resolves to the control-plane node. The nodes get an
 # /etc/hosts entry automatically (base role); YOUR LAPTOP DOES NOT — run
@@ -84,7 +96,8 @@ pod_cidr: "10.244.0.0/16"
 
 # --- versions --------------------------------------------------------------
 # CHECK THESE BEFORE YOUR FIRST RUN. Kubernetes/containerd were verified
-# 2026-07-26; the Cilium release and chart digest were verified 2026-07-31.
+# 2026-07-26; the Cilium release and chart digest were verified 2026-07-31;
+# Tailscale 1.96.2 and its resolute signing key were verified 2026-08-01.
 #   Kubernetes: https://kubernetes.io/releases/
 #   Cilium:     https://github.com/cilium/cilium/releases
 #   containerd: https://download.docker.com/linux/ubuntu/dists/resolute/stable/binary-amd64/Packages
@@ -116,6 +129,18 @@ containerd_apt_version: "2.2.6-1~ubuntu.26.04~resolute"
 # This is a rotating aggregate keyring — if it changes legitimately this digest
 # must be regenerated AND cross-checked against Docker's install docs.
 docker_key_sha256: "1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570"
+
+# Exact official package version. The amd64 .deb was independently verified as
+# sha256 0431610d988ec54643a6beeae35f943aa3f11362577828138d367ca5aac29bc6.
+# Installation still uses apt's repository signature plus the checksum-pinned
+# signing key below as its trust boundary.
+tailscale_apt_version: "1.96.2"
+
+# sha256 of Tailscale's Ubuntu 26.04 package signing key:
+# https://pkgs.tailscale.com/stable/ubuntu/resolute.noarmor.gpg
+# Verified 2026-08-01; signing fingerprint:
+# 2596 A99E AAB3 3821 893C 0A79 458C A832 957F 5868
+tailscale_key_sha256: "3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39"
 
 cilium_version: "1.20.0"
 # OCI manifest digest reported by:

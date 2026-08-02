@@ -1,8 +1,8 @@
 # base
 
 Baseline OS configuration, identical on every node: hostname, `/etc/hosts`,
-timezone, chrony, apt upgrade, base packages, WiFi power-save off, optional
-Tailscale, pending-reboot reporting.
+timezone, chrony, apt upgrade, base packages, WiFi power-save off, and
+pending-reboot reporting.
 
 **Unit of automation:** one machine's OS baseline. **Outcome:** a patched,
 time-synchronised node that can resolve the control-plane endpoint.
@@ -28,12 +28,7 @@ why the Kubernetes and containerd packages are pinned and held by the
 Declared and validated in [`meta/argument_specs.yml`](meta/argument_specs.yml).
 
 Required: `timezone`, `control_plane_endpoint`, `control_plane_host`.
-Optional: `base_packages` (see `defaults/main.yml`), `tailscale_auth_key`.
-
-`tailscale_auth_key` is a secret that grants tailnet membership. Keep it in
-`ansible-vault` or pass it with `--extra-vars`; never in plain `group_vars`. The
-entire Tailscale block is skipped when it is unset, so leaving it out is a
-supported configuration rather than a broken one.
+Optional: `base_packages`.
 
 ## Rollback
 
@@ -44,7 +39,6 @@ No automatic rollback. Per-item recovery:
 | Hostname | `sudo hostnamectl set-hostname <old>` |
 | `/etc/hosts` entries | Managed by `lineinfile`; edit or delete the line |
 | WiFi power-save unit | `sudo systemctl disable --now wifi-no-powersave.service` then delete `/etc/systemd/system/wifi-no-powersave.service` |
-| Tailscale enrolment | `sudo tailscale logout`, then remove the node from the tailnet admin console |
 | `apt upgrade` | Not reversible in practice. Restore from a snapshot if you need the old package set. |
 
 Files this role **replaces** wholesale rather than edits:

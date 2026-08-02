@@ -4,7 +4,6 @@ argument_specs:
     short_description: Baseline OS configuration, identical on every node
     description:
       - Hostname, timezone, chrony, apt upgrade, base packages, WiFi power-save.
-      - Optionally enrols the node in a Tailscale tailnet.
       - >-
         Also a patch event - this role runs `apt upgrade`, so every application
         may pull a kernel. Nothing reboots; a pending reboot is reported instead.
@@ -31,12 +30,4 @@ argument_specs:
           - Override only to add site-specific extras; see defaults/main.yml.
         type: list
         elements: str
-        required: false
-      tailscale_auth_key:
-        description:
-          - Tailscale auth key. The whole Tailscale block is skipped when unset.
-          - >-
-            A secret that grants tailnet membership - keep it in ansible-vault or
-            pass it via --extra-vars, never in plain group_vars.
-        type: str
         required: false

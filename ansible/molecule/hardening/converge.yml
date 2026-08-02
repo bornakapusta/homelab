@@ -11,6 +11,12 @@
       - ansible
     ssh_allowed_from:
       - 192.0.2.0/24
+      - 100.64.0.0/10
+    ingress_allowed_from:
+      - 192.0.2.0/24
+    tailscale_enabled: true
+    tailscale_cidr: 100.64.0.0/10
+    tailscale_udp_port: 41641
     node_ips:
       - 198.51.100.10
       - 198.51.100.11

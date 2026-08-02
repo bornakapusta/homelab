@@ -1,0 +1,38 @@
+---
+argument_specs:
+  main:
+    short_description: Install, pin, and enrol Tailscale for management access
+    description:
+      - Installs an exact Tailscale version from the signed official apt repository.
+      - Holds the package so an unrelated apt upgrade cannot change it.
+      - >-
+        Enrols new nodes with a bootstrap-only vaulted auth key and forces
+        netfilter-mode=off so the hardening role remains the firewall authority.
+    options:
+      tailscale_enabled:
+        description: Install and manage Tailscale on this node.
+        type: bool
+        default: false
+        required: false
+      tailscale_apt_version:
+        description: Exact Tailscale apt package version to install and hold.
+        type: str
+        required: true
+      tailscale_key_sha256:
+        description:
+          - sha256 of the distribution-specific Tailscale apt signing key.
+          - The checksum and apt repository signature form the installation trust boundary.
+        type: str
+        required: true
+      tailscale_udp_port:
+        description:
+          - UDP port used by tailscaled for direct WireGuard peer connections.
+          - The hardening role opens the same port because Tailscale netfilter is disabled.
+        type: int
+        required: true
+      tailscale_auth_key:
+        description:
+          - Bootstrap-only Tailscale auth key, required only for a node not yet enrolled.
+          - Load it from an explicit Ansible Vault extra-vars file.
+        type: str
+        required: false

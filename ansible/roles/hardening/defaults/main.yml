@@ -5,4 +5,8 @@
 #
 # ssh_allowed_users: (required) sshd AllowUsers — must include the connecting user
 # node_ips: (required) peer addresses trusted wholesale by ufw
-# ssh_allowed_from: (required) source networks for SSH and for ingress 80/443
+# ssh_allowed_from: (required) source networks for SSH
+# ingress_allowed_from: (required) source networks for ingress 80/443
+# tailscale_enabled: (required) whether tailnet-specific rules are active
+# tailscale_cidr: (required) canonical tailnet source range
+# tailscale_udp_port: (required) tailscaled direct-connection transport port

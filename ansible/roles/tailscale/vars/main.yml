@@ -1,0 +1,11 @@
+---
+# Role constants. These are deliberately not overrideable site inputs.
+
+# Deterministic provenance header used by copy: content. `ansible_managed` is
+# only injected by the template action, so read the same configured value here.
+__tailscale_managed_header: "{{ lookup('config', 'DEFAULT_MANAGED_STR') | comment }}"
+
+# One list drives the package hold lifecycle, matching the package-management
+# pattern used by kubernetes_node without exposing an unnecessary role knob.
+__tailscale_managed_held_packages:
+  - tailscale

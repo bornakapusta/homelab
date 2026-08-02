@@ -5,7 +5,6 @@
 # timezone: (required)
 # control_plane_endpoint: (required)
 # control_plane_host: (required)
-# tailscale_auth_key: (optional) skips the whole Tailscale block when unset
 
 # THE authoritative base package list — group_vars/all.yml deliberately does not
 # duplicate it, because a duplicate there would silently win and edits here would
@@ -14,7 +13,7 @@
 # Not arbitrary — each entry has a consumer:
 #   chrony          clock sync; skew breaks etcd and TLS (enabled in tasks/main.yml)
 #   iw              the WiFi power-save-off unit shells out to /usr/sbin/iw
-#   ca-certificates, gnupg   apt keyrings added by the kubernetes_node role
+#   ca-certificates, gnupg   apt repository trust and bootstrap tooling
 base_packages:
   - curl
   - vim

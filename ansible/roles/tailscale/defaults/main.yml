@@ -1,0 +1,10 @@
+---
+# Keep the role inert unless a site opts into Tailscale explicitly. The
+# remaining interface values are intentionally required and come from
+# group_vars/all.yml; plausible defaults would hide a missing trust pin or
+# accidentally select the wrong transport port.
+# tailscale_apt_version: (required) exact official apt package version
+# tailscale_key_sha256: (required) suite-specific signing-key digest
+# tailscale_udp_port: (required) tailscaled direct-connection UDP port
+# tailscale_auth_key: (optional) bootstrap-only secret from an explicit vault
+tailscale_enabled: false

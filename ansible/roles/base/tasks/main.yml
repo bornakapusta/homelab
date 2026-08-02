@@ -88,53 +88,6 @@
     state: started
     daemon_reload: true
 
-# --- Tailscale VPN ----------------------------------------------------------
-# Install Tailscale so nodes are reachable from anywhere via 100.x.x.x.
-# Skipped entirely if tailscale_auth_key is not set.
-- name: Check if Tailscale is already installed
-  ansible.builtin.command: tailscale version
-  register: __base_ts_installed
-  failed_when: false
-  changed_when: false
-
-- name: Install Tailscale
-  when: __base_ts_installed.rc != 0 and tailscale_auth_key | default('') | length > 0
-  block:
-    - name: Download Tailscale install script
-      ansible.builtin.get_url:
-        url: https://tailscale.com/install.sh
-        dest: /tmp/tailscale-install.sh
-        mode: "0755"
-
-    - name: Run Tailscale install script
-      ansible.builtin.command: /tmp/tailscale-install.sh
-      changed_when: true
-
-- name: Enable tailscaled
-  ansible.builtin.systemd:
-    name: tailscaled
-    enabled: true
-    state: started
-  when: __base_ts_installed.rc == 0 or tailscale_auth_key | default('') | length > 0
-
-- name: Check if already authenticated
-  ansible.builtin.command: tailscale status
-  register: __base_ts_status
-  failed_when: false
-  changed_when: false
-  when: tailscale_auth_key | default('') | length > 0
-
-# no_log because the auth key is on the command line and Ansible echoes the
-# command it ran — without this the key lands in terminal scrollback.
-- name: Authenticate to tailnet
-  ansible.builtin.command: >
-    tailscale up
-    --authkey={{ tailscale_auth_key }}
-    --hostname={{ inventory_hostname }}
-  when: tailscale_auth_key | default('') | length > 0 and __base_ts_status.rc | default(0) != 0
-  changed_when: true
-  no_log: true
-
 # --- reboot reporting ------------------------------------------------------
 # `apt upgrade` above can pull a kernel. Nothing here reboots: on a cluster you
 # drain first, by hand, one node at a time. Surface the pending work so it does

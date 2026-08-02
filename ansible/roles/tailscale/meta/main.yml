@@ -1,0 +1,7 @@
+---
+# Pinned Tailscale installation and management-plane enrolment.
+#
+# No galaxy_info block: this role is local to this repository and is never
+# published to Galaxy. The controller ansible-core floor is enforced by the
+# preflight role.
+dependencies: []

@@ -9,6 +9,12 @@
       - ansible
     ssh_allowed_from:
       - 192.0.2.0/24
+      - 100.64.0.0/10
+    ingress_allowed_from:
+      - 192.0.2.0/24
+    tailscale_enabled: true
+    tailscale_cidr: 100.64.0.0/10
+    tailscale_udp_port: 41641
     node_ips:
       - 198.51.100.10
       - 198.51.100.11
@@ -96,6 +102,48 @@
         fail_msg: "Peer {{ item }} is not trusted by ufw."
         quiet: true
       loop: "{{ node_ips }}"
+
+    - name: Tailnet access must be SSH-only
+      ansible.builtin.assert:
+        that:
+          - __tailnet_ssh_rules | length == 1
+          - "'tailscale0' in (__tailnet_ssh_rules | join(' '))"
+          - __tailnet_rules | select('search', '80/tcp|443/tcp') | list | length == 0
+        fail_msg: >-
+          The tailnet must reach OpenSSH through exactly one tailscale0-bound
+          rule and must not retain legacy application ingress on ports 80/443.
+        quiet: true
+      vars:
+        __tailnet_rules: >-
+          {{ verify_ufw_status.stdout_lines | select('search', tailscale_cidr) | list }}
+        __tailnet_ssh_rules: >-
+          {{ __tailnet_rules | select('search', '22/tcp') | list }}
+
+    - name: LAN application ingress must contain exactly one rule per port
+      ansible.builtin.assert:
+        that:
+          - __lan_rules | select('match', '^80/tcp\s+') | list | length == 1
+          - __lan_rules | select('match', '^443/tcp\s+') | list | length == 1
+        fail_msg: >-
+          LAN ingress must retain exactly one TCP 80 and one TCP 443 rule while
+          legacy tailnet web rules are removed.
+        quiet: true
+      vars:
+        __lan_rules: >-
+          {{ verify_ufw_status.stdout_lines | select('search', '192.0.2.0/24') | list }}
+
+    - name: Tailscale UDP transport must be allowed
+      ansible.builtin.assert:
+        that:
+          - __tailscale_udp_rules | length > 0
+        fail_msg: >-
+          UFW has no allow rule for the configured Tailscale UDP transport port.
+        quiet: true
+      vars:
+        __tailscale_udp_rules: >-
+          {{ verify_ufw_status.stdout_lines
+             | select('match', '^' ~ (tailscale_udp_port | string) ~ '/udp\s+')
+             | list }}
 
     # --- backup: true actually works -----------------------------------------
     # Tamper with the live file, re-apply, and prove the previous contents were

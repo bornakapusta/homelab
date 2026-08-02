@@ -1,0 +1,259 @@
+---
+# Install and enrol the management VPN only after hardening has made UFW the
+# firewall authority. Tailscale itself is always configured with netfilter off.
+
+- name: Configure Tailscale management access
+  when: tailscale_enabled | bool
+  block:
+    # A managed text header cannot be embedded in an OpenPGP binary keyring.
+    # This is the sole narrow exception: the download is checksum-pinned and a
+    # recoverable backup is kept when an existing keyring is replaced.
+    - name: Add the checksum-pinned Tailscale package signing key
+      ansible.builtin.get_url:
+        url: >-
+          https://pkgs.tailscale.com/stable/ubuntu/{{ ansible_distribution_release }}.noarmor.gpg
+        dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+        owner: root
+        group: root
+        mode: "0644"
+        checksum: "sha256:{{ tailscale_key_sha256 }}"
+        backup: true
+
+    - name: Add the managed Tailscale apt repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/tailscale.list
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        content: |
+          {{ __tailscale_managed_header }}
+          deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu {{ ansible_distribution_release }} main
+
+    # Keep the package unheld for only the exact install operation. The always
+    # path restores the hold whenever dpkg confirms a fully installed package,
+    # including after a failed upgrade or downgrade.
+    - name: Install Tailscale while preserving its package hold
+      block:
+        - name: Read the installed Tailscale package version
+          ansible.builtin.command:
+            argv:
+              - dpkg-query
+              - --show
+              - "--showformat=${Version}"
+              - tailscale
+          register: __tailscale_installed_version
+          changed_when: false
+          failed_when: false
+          check_mode: false
+
+        - name: Read current Tailscale package hold state
+          ansible.builtin.command: apt-mark showhold
+          register: __tailscale_apt_holds
+          changed_when: false
+          check_mode: false
+
+        - name: Unhold Tailscale so a deliberate version change can apply
+          ansible.builtin.dpkg_selections:
+            name: "{{ item }}"
+            selection: install
+          loop: "{{ __tailscale_managed_held_packages }}"
+          when:
+            - item in __tailscale_apt_holds.stdout_lines
+            - >-
+              __tailscale_installed_version.rc != 0 or
+              __tailscale_installed_version.stdout != tailscale_apt_version
+
+        # A first-run check cannot resolve this package: the repository copy
+        # above and apt cache refresh are both predictions, so apt still sees
+        # the node's old package index. Predict the exact transition from dpkg
+        # state instead, and reserve repository-backed resolution for a live
+        # run.
+        - name: Predict the pinned Tailscale package change
+          ansible.builtin.debug:
+            msg: >-
+              Tailscale {{ tailscale_apt_version }} would be installed. Package
+              resolution is deferred because check mode does not apply the new
+              repository or refresh APT's real package index.
+          changed_when: true
+          when:
+            - ansible_check_mode
+            - >-
+              __tailscale_installed_version.rc != 0 or
+              __tailscale_installed_version.stdout != tailscale_apt_version
+
+        - name: Install Tailscale at the pinned version
+          ansible.builtin.apt:
+            name: "tailscale={{ tailscale_apt_version }}"
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+            allow_downgrade: true
+            allow_change_held_packages: true
+          register: __tailscale_package
+          when: not ansible_check_mode
+      always:
+        # This read must execute in check mode so the hold prediction reflects
+        # the package state that exists, not an apt change that was only
+        # simulated. A missing or partly configured package is not held.
+        - name: Detect whether the Tailscale package is fully installed
+          ansible.builtin.command:
+            argv:
+              - dpkg-query
+              - --show
+              - "--showformat=${Status}"
+              - tailscale
+          register: __tailscale_dpkg_status
+          changed_when: false
+          failed_when: false
+          check_mode: false
+
+        - name: Restore the Tailscale package hold when installed
+          ansible.builtin.dpkg_selections:
+            name: tailscale
+            selection: hold
+          when:
+            - __tailscale_dpkg_status.rc == 0
+            - __tailscale_dpkg_status.stdout == 'install ok installed'
+
+    - name: Configure the tailscaled transport port
+      ansible.builtin.copy:
+        dest: /etc/default/tailscaled
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        content: |
+          {{ __tailscale_managed_header }}
+          PORT="{{ tailscale_udp_port }}"
+          FLAGS=""
+      register: __tailscale_defaults
+
+    - name: Enable tailscaled and apply any configuration change
+      ansible.builtin.systemd:
+        name: tailscaled
+        enabled: true
+        state: >-
+          {{ 'restarted'
+             if __tailscale_package.changed or __tailscale_defaults.changed
+             else 'started' }}
+      when: not ansible_check_mode
+
+    # Commands below depend on an installed binary and a running LocalAPI. Keep
+    # the entire live lifecycle out of check mode so a first-run --check never
+    # tries to execute a binary apt has only predicted it would install.
+    - name: Enforce Tailscale enrolment and firewall ownership
+      when: not ansible_check_mode
+      block:
+        - name: Remove any stale staged Tailscale auth key
+          ansible.builtin.file:
+            path: /run/tailscale-auth.key
+            state: absent
+
+        - name: Wait for the tailscaled LocalAPI
+          ansible.builtin.command:
+            argv:
+              - tailscale
+              - debug
+              - prefs
+          register: __tailscale_prefs
+          changed_when: false
+          retries: 15
+          delay: 2
+          until: __tailscale_prefs.rc == 0
+
+        - name: Check whether this node already has a Tailscale IPv4 address
+          ansible.builtin.command:
+            argv:
+              - tailscale
+              - ip
+              - -4
+          register: __tailscale_ip
+          failed_when: false
+          changed_when: false
+
+        - name: Disable Tailscale netfilter management on an enrolled node
+          ansible.builtin.command:
+            argv:
+              - tailscale
+              - set
+              - --netfilter-mode=off
+          changed_when: true
+          when:
+            - __tailscale_ip.rc == 0
+            - (__tailscale_ip.stdout | trim | length) > 0
+            - ((__tailscale_prefs.stdout | from_json).NetfilterMode | int) != 0
+
+        # The CLI's file: form keeps the reusable credential out of process
+        # arguments. The always block removes its root-only runtime copy even if
+        # tailscale up fails.
+        - name: Authenticate a new node to Tailscale
+          when: __tailscale_ip.rc != 0 or (__tailscale_ip.stdout | trim | length) == 0
+          block:
+            - name: A new node requires a vaulted Tailscale auth key
+              ansible.builtin.assert:
+                that:
+                  - (tailscale_auth_key | default('')) | length > 0
+                fail_msg: >-
+                  This node is not enrolled in Tailscale. Load the bootstrap
+                  secret with --ask-vault-pass --extra-vars
+                  @vars/tailscale.vault.
+                quiet: true
+
+            - name: Stage the Tailscale auth key in root-only runtime storage
+              ansible.builtin.copy:
+                dest: /run/tailscale-auth.key
+                content: "{{ tailscale_auth_key }}\n"
+                owner: root
+                group: root
+                mode: "0600"
+              no_log: true
+
+            - name: Join the tailnet without Tailscale-managed firewall rules
+              ansible.builtin.command:
+                argv:
+                  - tailscale
+                  - up
+                  - --auth-key=file:/run/tailscale-auth.key
+                  - "--hostname={{ inventory_hostname }}"
+                  - --netfilter-mode=off
+                  - --timeout=60s
+              changed_when: true
+              no_log: true
+          always:
+            - name: Remove the staged Tailscale auth key
+              ansible.builtin.file:
+                path: /run/tailscale-auth.key
+                state: absent
+
+        - name: Re-read Tailscale preferences after setup
+          ansible.builtin.command:
+            argv:
+              - tailscale
+              - debug
+              - prefs
+          register: __tailscale_verified_prefs
+          changed_when: false
+
+        - name: Confirm Tailscale netfilter management is disabled
+          ansible.builtin.assert:
+            that:
+              - (__tailscale_verified_prefs.stdout | from_json).NetfilterMode is number
+              - (__tailscale_verified_prefs.stdout | from_json).NetfilterMode == 0
+            fail_msg: >-
+              tailscaled still has a non-zero NetfilterMode. UFW cannot enforce
+              management-only tailnet access until Tailscale netfilter is off.
+            quiet: true
+
+        - name: Confirm this node has a Tailscale IPv4 address
+          ansible.builtin.command:
+            argv:
+              - tailscale
+              - ip
+              - -4
+          register: __tailscale_verified_ip
+          changed_when: false
+
+        - name: Report this node's Tailscale IPv4 address
+          ansible.builtin.debug:
+            msg: "{{ inventory_hostname }} Tailscale IP: {{ __tailscale_verified_ip.stdout | trim }}"

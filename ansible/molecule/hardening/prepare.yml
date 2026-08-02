@@ -1,0 +1,25 @@
+---
+- name: Prepare
+  hosts: molecule
+  become: false
+  vars:
+    tailscale_cidr: 100.64.0.0/10
+  tasks:
+    - name: Install UFW before seeding migration fixtures
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+
+    # These rules model a host previously converged with generic source-only
+    # tailnet access. Removing loop items does not remove rules left by earlier
+    # runs, so converge must migrate SSH and web ingress explicitly.
+    - name: Seed legacy generic tailnet SSH, HTTP, and HTTPS rules
+      community.general.ufw:
+        rule: allow
+        src: "{{ tailscale_cidr }}"
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - "22"
+        - "80"
+        - "443"
