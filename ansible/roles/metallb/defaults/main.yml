@@ -1,0 +1,7 @@
+---
+# Defaults for the metallb role. Release pins and address-pool intent belong in
+# group_vars/all.yml; these are safe structural defaults.
+
+metallb_pool_name: lan-pool
+metallb_l2_advertisement_name: lan
+metallb_kubeconfig: "{{ playbook_dir }}/kubeconfig"

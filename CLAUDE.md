@@ -12,12 +12,13 @@ All commands run from repo root via Makefile:
 
 ```bash
 make deps       # install required Ansible collections
-make check      # ansible-playbook --syntax-check + ansible-lint (touches no node)
+make check      # syntax + local safety-gate tests + ansible-lint (touches no node)
 make hooks      # install the git pre-commit hooks (lint + gitleaks secret scan)
 make test       # molecule test -s hardening (needs Docker; touches no node)
 make ping       # verify SSH to all nodes
 make nodes      # ansible-playbook site.yml (configure nodes, idempotent)
 make cluster    # ansible-playbook cluster.yml (kubeadm init + CNI + join workers)
+make platform   # ansible-playbook platform.yml (pre-Argo MetalLB bootstrap)
 make all        # nodes + cluster in one go
 make hosts      # print the /etc/hosts line THIS LAPTOP needs
 make status     # kubectl get nodes + pods using fetched kubeconfig
@@ -60,9 +61,10 @@ make cluster
 
 ## Architecture
 
-### Two-playbook design
+### Three-playbook design
 - **`site.yml`** — idempotent node configuration. Re-run freely. Applies roles: `base` → `hardening` → `kubernetes_node`. Gets all nodes to an identical kubeadm-ready state.
 - **`cluster.yml`** — one-time cluster bootstrap. Runs `control_plane` role on the CP node, then `worker` role on workers. Safe to re-run (skips init/join if already done via stat checks on `/etc/kubernetes/admin.conf` and `/etc/kubernetes/kubelet.conf`).
+- **`platform.yml`** — minimal pre-Argo bootstrap for cluster services. It currently installs checksum-pinned native-mode MetalLB; its `192.168.178.240-250` pool sits above the router's confirmed `.20-.200` DHCP range.
 
 ### Ansible roles (`ansible/roles/`)
 Order in `site.yml` matters — see the note under `automation_user`.
@@ -76,6 +78,7 @@ Order in `site.yml` matters — see the note under `automation_user`.
 | `kubernetes_node` | swap off, kernel modules (overlay, br_netfilter), sysctls, containerd (from Docker repo, SystemdCgroup=true, pinned), kubelet/kubeadm/kubectl pinned+held, kubelet `--node-ip` pinned |
 | `control_plane` | kubeadm init, digest-pinned Cilium CNI, kubeconfig fetch, generate join command |
 | `worker` | join cluster using token from control_plane, wait for registration, label node |
+| `metallb` | checksum-pinned native manifest, digest-pinned images, Layer 2 address-pool safety gate |
 
 `automation_user` **must** run before `hardening`: the account has to exist and be
 listed in sshd's `AllowUsers` before `hardening` reloads sshd.
@@ -126,7 +129,7 @@ is a deliberate 4-step rollout documented in `group_vars/all.yml`.
 - Handlers live in each role's `handlers/main.yml` — hardening has `Reload sshd`/`Reload ufw`; kubernetes_node has `Reload sysctl`/`Restart containerd`/`Restart kubelet`
 - The kubeconfig is fetched to `ansible/kubeconfig` (gitignored)
 - `autoinstall/user-data` contains secrets and is gitignored; only `user-data.example` is tracked
-- Versions **and their sha256 digests** are pinned together in `group_vars/all.yml`. The two apt signing keys are checksum-verified and the Cilium OCI chart is installed by digest; never weaken those checks. Regenerate key digests with `curl -fsSL <url> | sha256sum`, and obtain the chart digest with `helm pull oci://quay.io/cilium/charts/cilium --version <version>`. The k8s `Release.key` digest is stable across minor bumps.
+- Versions **and their sha256 digests** are pinned together in `group_vars/all.yml`. The two apt signing keys and MetalLB native manifest are checksum-verified; Cilium and MetalLB runtime images use immutable digests. Never weaken those checks. Regenerate key or manifest digests with `curl -fsSL <url> | sha256sum`, and obtain the Cilium chart digest with `helm pull oci://quay.io/cilium/charts/cilium --version <version>`. The k8s `Release.key` digest is stable across minor bumps.
 - Anything writing to `/etc/sudoers.d/` must use `validate: visudo -cf %s` — a malformed file makes `sudo` unusable on every node at once
 - Any task whose command line or output carries a secret gets `no_log: true`. Prefer removing the secret instead where possible (e.g. `kubeadm init --skip-token-print`), since `no_log` censors failures too
 - **Variable naming is enforced by lint, not convention.** Registered and `set_fact` variables are `__<role>_`-prefixed (internal); role defaults are `<role>_`-prefixed. The one intentional exception is `control_plane_join_command`, a published output of `control_plane` read by `worker` through `hostvars` — interface, not internal. Ansible has no namespaces and `site.yml` runs all five node roles in a single play, so they share one namespace for the whole run.

@@ -1,0 +1,33 @@
+---
+- name: Seed live-object fixtures for {{ metallb_pool_state_case.name }}
+  ansible.builtin.set_fact:
+    __metallb_l2_current:
+      stdout: >-
+        {{ {'spec': metallb_pool_state_case.l2_spec} | to_json
+           if metallb_pool_state_case.l2_spec is defined else '' }}
+    __metallb_pool_current:
+      stdout: >-
+        {{ {'spec': metallb_pool_state_case.pool_spec} | to_json
+           if metallb_pool_state_case.pool_spec is defined else '' }}
+    metallb_pool_name: lan-pool
+    metallb_address_ranges: [192.0.2.240-192.0.2.250]
+
+- name: Compare desired and fixture state for {{ metallb_pool_state_case.name }}
+  ansible.builtin.include_tasks: ../../roles/metallb/tasks/pool_state.yml
+
+- name: Reconciliation decision must match for {{ metallb_pool_state_case.name }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        __metallb_pool_exists | bool
+        == metallb_pool_state_case.expect_pool_exists | bool
+      - >-
+        __metallb_l2_exists | bool
+        == metallb_pool_state_case.expect_l2_exists | bool
+      - >-
+        __metallb_pool_needs_reconcile | bool
+        == metallb_pool_state_case.expect_pool_change | bool
+      - >-
+        __metallb_l2_needs_reconcile | bool
+        == metallb_pool_state_case.expect_l2_change | bool
+    quiet: true

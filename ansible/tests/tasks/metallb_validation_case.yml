@@ -1,0 +1,42 @@
+---
+- name: Reset the validation outcome for {{ metallb_validation_case.name }}
+  ansible.builtin.set_fact:
+    metallb_validation_rejected: false
+
+- name: Exercise validation for {{ metallb_validation_case.name }}
+  block:
+    - name: Run only the MetalLB validation tasks
+      ansible.builtin.include_role:
+        name: metallb
+        tasks_from: validate
+      vars:
+        metallb_version: "{{ metallb_validation_case.version | default('0.16.1') }}"
+        metallb_manifest_sha256: >-
+          {{ metallb_validation_case.manifest_digest
+             | default(metallb_validation_digest) }}
+        metallb_controller_image_sha256: >-
+          {{ metallb_validation_case.controller_digest
+             | default(metallb_validation_digest) }}
+        metallb_speaker_image_sha256: >-
+          {{ metallb_validation_case.speaker_digest
+             | default(metallb_validation_digest) }}
+        metallb_address_pool_state: "{{ metallb_validation_case.state }}"
+        metallb_address_pool_confirmed: >-
+          {{ metallb_validation_case.confirmed }}
+        metallb_address_ranges: "{{ metallb_validation_case.ranges }}"
+  rescue:
+    - name: Record that the safety gate rejected this case
+      ansible.builtin.set_fact:
+        metallb_validation_rejected: true
+
+- name: Validation outcome must match the expected result
+  ansible.builtin.assert:
+    that:
+      - >-
+        metallb_validation_rejected | bool
+        == metallb_validation_case.expect_rejected | bool
+    fail_msg: >-
+      {{ metallb_validation_case.name }} was expected to be
+      {{ 'rejected' if metallb_validation_case.expect_rejected else 'accepted' }},
+      but the safety gate produced the opposite result.
+    quiet: true

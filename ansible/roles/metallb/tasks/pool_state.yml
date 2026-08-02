@@ -1,0 +1,36 @@
+---
+# Pure state comparison kept separate so the dry-run decision can be tested
+# without contacting a Kubernetes API server.
+
+- name: Parse the current managed MetalLB resource specifications
+  ansible.builtin.set_fact:
+    __metallb_l2_exists: >-
+      {{ __metallb_l2_current.stdout | default('') | length > 0 }}
+    __metallb_pool_exists: >-
+      {{ __metallb_pool_current.stdout | default('') | length > 0 }}
+    __metallb_l2_current_spec: >-
+      {{ (__metallb_l2_current.stdout | from_json).get('spec', {})
+         if __metallb_l2_current.stdout | default('') | length > 0
+         else {} }}
+    __metallb_pool_current_spec: >-
+      {{ (__metallb_pool_current.stdout | from_json).get('spec', {})
+         if __metallb_pool_current.stdout | default('') | length > 0
+         else {} }}
+  run_once: true
+
+- name: Decide whether the managed MetalLB resources need reconciliation
+  ansible.builtin.set_fact:
+    __metallb_l2_needs_reconcile: >-
+      {{ not __metallb_l2_exists
+         or __metallb_l2_current_spec
+            != {'ipAddressPools': [metallb_pool_name]} }}
+    __metallb_pool_needs_reconcile: >-
+      {{ not __metallb_pool_exists
+         or ({'autoAssign': true, 'avoidBuggyIPs': false}
+             | combine(__metallb_pool_current_spec))
+            != {
+                 'addresses': metallb_address_ranges,
+                 'autoAssign': true,
+                 'avoidBuggyIPs': false
+               } }}
+  run_once: true

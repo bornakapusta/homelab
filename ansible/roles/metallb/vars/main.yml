@@ -1,0 +1,43 @@
+---
+# Role constants. These are implementation details rather than operator knobs.
+
+__metallb_namespace: metallb-system
+
+__metallb_manifest_url: >-
+  https://raw.githubusercontent.com/metallb/metallb/v{{ metallb_version }}/config/manifests/metallb-native.yaml
+
+__metallb_controller_image: >-
+  quay.io/metallb/controller:v{{ metallb_version }}@sha256:{{ metallb_controller_image_sha256 }}
+
+__metallb_speaker_image: >-
+  quay.io/metallb/speaker:v{{ metallb_version }}@sha256:{{ metallb_speaker_image_sha256 }}
+
+__metallb_expected_crds:
+  - bfdprofiles.metallb.io
+  - bgpadvertisements.metallb.io
+  - bgppeers.metallb.io
+  - communities.metallb.io
+  - configurationstates.metallb.io
+  - ipaddresspools.metallb.io
+  - l2advertisements.metallb.io
+  - servicebgpstatuses.metallb.io
+  - servicel2statuses.metallb.io
+
+__metallb_manifest_annotation: >-
+  homelab.home.arpa/metallb-manifest-sha256
+
+__metallb_kubectl_argv:
+  - kubectl
+  - --request-timeout=30s
+  - --kubeconfig
+  - "{{ metallb_kubeconfig }}"
+  - --server
+  - "https://{{ ansible_host }}:6443"
+
+__metallb_kubectl_wait_argv:
+  - kubectl
+  - --request-timeout=310s
+  - --kubeconfig
+  - "{{ metallb_kubeconfig }}"
+  - --server
+  - "https://{{ ansible_host }}:6443"

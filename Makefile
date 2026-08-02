@@ -1,4 +1,4 @@
-.PHONY: deps check hooks test ping nodes cluster all status hosts reset-help
+.PHONY: deps check hooks test ping nodes cluster platform all status hosts reset-help
 
 ANSIBLE_DIR := ansible
 
@@ -16,9 +16,13 @@ CP_IP       := $(shell awk '/ansible_host=/{sub(/.*ansible_host=/, ""); print $$
 deps:
 	ansible-galaxy collection install -r $(ANSIBLE_DIR)/requirements.yml
 
-## parse and lint every playbook and role without touching a node
+## parse, test controller-only safety gates, and lint without touching a node
 check:
-	cd $(ANSIBLE_DIR) && ansible-playbook --syntax-check site.yml cluster.yml
+	cd $(ANSIBLE_DIR) && ansible-playbook --syntax-check site.yml cluster.yml platform.yml
+	cd $(ANSIBLE_DIR) && \
+	  ANSIBLE_ROLES_PATH="$(CURDIR)/$(ANSIBLE_DIR)/roles" \
+	  ANSIBLE_REMOTE_TEMP="/tmp/homelab-ansible-remote" \
+	  ansible-playbook --inventory localhost, tests/metallb_validation.yml
 	cd $(ANSIBLE_DIR) && ansible-lint
 
 ## install the git pre-commit hooks (lint + secret scanning)
@@ -58,6 +62,10 @@ nodes:
 ## bootstrap the kubeadm cluster + CNI + join workers
 cluster:
 	cd $(ANSIBLE_DIR) && ansible-playbook cluster.yml
+
+## bootstrap pre-Argo cluster services (currently MetalLB)
+platform:
+	cd $(ANSIBLE_DIR) && ansible-playbook platform.yml
 
 ## nodes + cluster in one go
 all: nodes cluster

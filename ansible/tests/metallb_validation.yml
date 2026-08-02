@@ -1,0 +1,185 @@
+---
+- name: Exercise the MetalLB operator-input safety gate
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    metallb_validation_digest: >-
+      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    metallb_validation_cases:
+      - name: disabled pool
+        state: absent
+        confirmed: false
+        ranges: []
+        expect_rejected: false
+      - name: confirmed IPv4 range
+        state: present
+        confirmed: true
+        ranges: [192.0.2.240-192.0.2.250]
+        expect_rejected: false
+      - name: confirmed IPv4 CIDR
+        state: present
+        confirmed: true
+        ranges: [192.0.2.240/29]
+        expect_rejected: false
+      - name: unconfirmed active pool
+        state: present
+        confirmed: false
+        ranges: [192.0.2.240-192.0.2.250]
+        expect_rejected: true
+      - name: active pool without addresses
+        state: present
+        confirmed: true
+        ranges: []
+        expect_rejected: true
+      - name: disabled pool retaining addresses
+        state: absent
+        confirmed: false
+        ranges: [192.0.2.240-192.0.2.250]
+        expect_rejected: true
+      - name: malformed manifest digest
+        state: absent
+        confirmed: false
+        ranges: []
+        manifest_digest: not-a-digest
+        expect_rejected: true
+      - name: malformed release version
+        state: absent
+        confirmed: false
+        ranges: []
+        version: latest
+        expect_rejected: true
+      - name: malformed controller digest
+        state: absent
+        confirmed: false
+        ranges: []
+        controller_digest: not-a-digest
+        expect_rejected: true
+      - name: malformed speaker digest
+        state: absent
+        confirmed: false
+        ranges: []
+        speaker_digest: not-a-digest
+        expect_rejected: true
+      - name: invalid IPv4 octet
+        state: present
+        confirmed: true
+        ranges: [999.0.2.240-999.0.2.250]
+        expect_rejected: true
+      - name: descending IPv4 range
+        state: present
+        confirmed: true
+        ranges: [192.0.2.250-192.0.2.240]
+        expect_rejected: true
+      - name: IPv6 network
+        state: present
+        confirmed: true
+        ranges: ['2001:db8::/64']
+        expect_rejected: true
+    metallb_pool_state_cases:
+      - name: exact current state
+        pool_spec:
+          addresses: [192.0.2.240-192.0.2.250]
+          autoAssign: true
+          avoidBuggyIPs: false
+        l2_spec:
+          ipAddressPools: [lan-pool]
+        expect_pool_exists: true
+        expect_l2_exists: true
+        expect_pool_change: false
+        expect_l2_change: false
+      - name: upstream defaults omitted
+        pool_spec:
+          addresses: [192.0.2.240-192.0.2.250]
+        l2_spec:
+          ipAddressPools: [lan-pool]
+        expect_pool_exists: true
+        expect_l2_exists: true
+        expect_pool_change: false
+        expect_l2_change: false
+      - name: pool addresses drifted
+        pool_spec:
+          addresses: [192.0.2.230-192.0.2.239]
+        l2_spec:
+          ipAddressPools: [lan-pool]
+        expect_pool_exists: true
+        expect_l2_exists: true
+        expect_pool_change: true
+        expect_l2_change: false
+      - name: advertisement points at another pool
+        pool_spec:
+          addresses: [192.0.2.240-192.0.2.250]
+        l2_spec:
+          ipAddressPools: [other-pool]
+        expect_pool_exists: true
+        expect_l2_exists: true
+        expect_pool_change: false
+        expect_l2_change: true
+      - name: automatic allocation is disabled
+        pool_spec:
+          addresses: [192.0.2.240-192.0.2.250]
+          autoAssign: false
+        l2_spec:
+          ipAddressPools: [lan-pool]
+        expect_pool_exists: true
+        expect_l2_exists: true
+        expect_pool_change: true
+        expect_l2_change: false
+      - name: buggy addresses are avoided
+        pool_spec:
+          addresses: [192.0.2.240-192.0.2.250]
+          avoidBuggyIPs: true
+        l2_spec:
+          ipAddressPools: [lan-pool]
+        expect_pool_exists: true
+        expect_l2_exists: true
+        expect_pool_change: true
+        expect_l2_change: false
+      - name: pool has an extra allocation restriction
+        pool_spec:
+          addresses: [192.0.2.240-192.0.2.250]
+          serviceAllocation:
+            priority: 50
+        l2_spec:
+          ipAddressPools: [lan-pool]
+        expect_pool_exists: true
+        expect_l2_exists: true
+        expect_pool_change: true
+        expect_l2_change: false
+      - name: advertisement has an extra interface restriction
+        pool_spec:
+          addresses: [192.0.2.240-192.0.2.250]
+        l2_spec:
+          ipAddressPools: [lan-pool]
+          interfaces: [eth0]
+        expect_pool_exists: true
+        expect_l2_exists: true
+        expect_pool_change: false
+        expect_l2_change: true
+      - name: empty specs still belong to existing objects
+        pool_spec: {}
+        l2_spec: {}
+        expect_pool_exists: true
+        expect_l2_exists: true
+        expect_pool_change: true
+        expect_l2_change: true
+      - name: managed objects are missing
+        expect_pool_exists: false
+        expect_l2_exists: false
+        expect_pool_change: true
+        expect_l2_change: true
+  tasks:
+    - name: Run each MetalLB validation case
+      ansible.builtin.include_tasks: tasks/metallb_validation_case.yml
+      loop: "{{ metallb_validation_cases }}"
+      loop_control:
+        loop_var: metallb_validation_case
+        label: "{{ metallb_validation_case.name }}"
+
+    - name: Run each MetalLB reconciliation-decision case
+      ansible.builtin.include_tasks: tasks/metallb_pool_state_case.yml
+      loop: "{{ metallb_pool_state_cases }}"
+      loop_control:
+        loop_var: metallb_pool_state_case
+        label: "{{ metallb_pool_state_case.name }}"

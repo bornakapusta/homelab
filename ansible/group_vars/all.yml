@@ -155,5 +155,25 @@ cilium_version: "1.20.0"
 # version tag, so the chart and its digest-pinned images are reproducible.
 cilium_chart_sha256: "8009baed89d99fd84f7ee5cfdbf3a1fae8153452132549833956b6aca8b9d738"
 
+# MetalLB supplies LAN addresses for Services of type LoadBalancer. The native
+# manifest and both multi-architecture OCI image indexes were verified against
+# the official 0.16.1 release on 2026-08-02.
+metallb_version: "0.16.1"
+# sha256 of the versioned native-mode installation manifest:
+# https://raw.githubusercontent.com/metallb/metallb/v0.16.1/config/manifests/metallb-native.yaml
+metallb_manifest_sha256: "bf25feebb7582ca7df845efd52ffbc2960d6cbf4cfc972f47fded9f788b67f0b"
+# Multi-architecture OCI index digests reported by:
+#   docker buildx imagetools inspect quay.io/metallb/<image>:v0.16.1
+metallb_controller_image_sha256: "f51ab515de9ccd20dc3dccb093e48df8adddac019326c456f449e55ba91b6420"
+metallb_speaker_image_sha256: "16561e96531e1852d5c229ad7fae6e994dcfa983ff7f4de6b6208b34a4e2ddbc"
+
+# The FRITZ!Box DHCP pool is 192.168.178.20-192.168.178.200 (confirmed
+# 2026-08-02). Keep LoadBalancer addresses above it and below the broadcast
+# address; this range also avoids the router (.1) and all three node addresses.
+metallb_address_pool_state: present
+metallb_address_pool_confirmed: true
+metallb_address_ranges:
+  - 192.168.178.240-192.168.178.250
+
 # base_packages moved to roles/base/defaults/main.yml — it is a property of the
 # base role, not a site setting. Override it here only if you need extras.

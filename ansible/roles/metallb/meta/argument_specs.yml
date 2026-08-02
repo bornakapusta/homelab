@@ -1,0 +1,60 @@
+---
+argument_specs:
+  main:
+    short_description: Install pinned MetalLB and manage its LAN address pool
+    description:
+      - Applies MetalLB's checksum-pinned official native-mode manifest.
+      - Uses the lightweight native backend for Layer 2 announcements.
+      - >-
+        Keeps address allocation disabled until the operator explicitly confirms
+        that the configured range is outside DHCP and all reserved addresses.
+    options:
+      metallb_version:
+        description: Exact MetalLB application and manifest version.
+        type: str
+        required: true
+      metallb_manifest_sha256:
+        description: sha256 of the official MetalLB native installation manifest.
+        type: str
+        required: true
+      metallb_controller_image_sha256:
+        description: OCI index sha256 for the MetalLB controller image.
+        type: str
+        required: true
+      metallb_speaker_image_sha256:
+        description: OCI index sha256 for the MetalLB speaker image.
+        type: str
+        required: true
+      metallb_address_pool_state:
+        description:
+          - Whether the role-owned IPAddressPool and L2Advertisement are present.
+          - Use absent until the router DHCP boundary has been confirmed.
+        type: str
+        choices: [absent, present]
+        required: true
+      metallb_address_pool_confirmed:
+        description:
+          - >-
+            Explicit operator acknowledgement that every configured address is
+            outside DHCP and does not collide with a router, node, or reservation.
+        type: bool
+        required: true
+      metallb_address_ranges:
+        description:
+          - IPv4 CIDRs or first-last ranges assigned to LoadBalancer Services.
+          - Must be empty while metallb_address_pool_state is absent.
+        type: list
+        elements: str
+        required: true
+      metallb_pool_name:
+        description: Name of the role-owned IPAddressPool.
+        type: str
+        required: false
+      metallb_l2_advertisement_name:
+        description: Name of the role-owned L2Advertisement.
+        type: str
+        required: false
+      metallb_kubeconfig:
+        description: Admin kubeconfig fetched by the control_plane role.
+        type: str
+        required: false

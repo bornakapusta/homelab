@@ -1,0 +1,77 @@
+---
+# Controller-only validation kept separate so `make check` can exercise the
+# safety gate without requiring a Kubernetes API server.
+
+- name: Validate MetalLB pins and the address-pool safety gate
+  ansible.builtin.assert:
+    that:
+      - metallb_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+      - metallb_manifest_sha256 is match('^[0-9a-f]{64}$')
+      - metallb_controller_image_sha256 is match('^[0-9a-f]{64}$')
+      - metallb_speaker_image_sha256 is match('^[0-9a-f]{64}$')
+      - metallb_address_pool_state in ['absent', 'present']
+      - >-
+        metallb_address_pool_state == 'absent'
+        or metallb_address_pool_confirmed
+      - >-
+        metallb_address_pool_state == 'absent'
+        or metallb_address_ranges | length > 0
+      - >-
+        metallb_address_pool_state == 'present'
+        or metallb_address_ranges | length == 0
+    fail_msg: >-
+      MetalLB's release pins or address-pool intent are unsafe. Keep state=absent
+      with an empty range until you have checked the router's DHCP range. To
+      enable allocation, set state=present, confirmed=true, and at least one
+      range that is outside DHCP and every static/reserved address.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Validate each MetalLB address entry with Python's IP parser
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -c
+      - |
+        import ipaddress
+        import sys
+
+        value = sys.argv[1]
+        if "-" in value:
+            first_raw, last_raw = value.split("-", 1)
+            first = ipaddress.ip_address(first_raw)
+            last = ipaddress.ip_address(last_raw)
+            if first.version != 4 or last.version != 4 or int(first) > int(last):
+                raise ValueError("range must contain ascending IPv4 addresses")
+        else:
+            network = ipaddress.ip_network(value, strict=False)
+            if network.version != 4:
+                raise ValueError("network must be IPv4")
+      - "{{ item }}"
+  loop: "{{ metallb_address_ranges }}"
+  loop_control:
+    label: "{{ item }}"
+  when: metallb_address_pool_state == 'present'
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  register: __metallb_address_validation
+  failed_when: false
+  changed_when: false
+
+- name: MetalLB address entries must be valid IPv4 CIDRs or ascending ranges
+  ansible.builtin.assert:
+    that:
+      - item.rc == 0
+    fail_msg: >-
+      '{{ item.item }}' is not an IPv4 CIDR or ascending first-last address
+      range. Use a value such as 192.168.178.240-192.168.178.250 or
+      192.168.178.240/29.
+    quiet: true
+  loop: "{{ __metallb_address_validation.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: metallb_address_pool_state == 'present'
+  delegate_to: localhost
+  run_once: true

@@ -1,0 +1,18 @@
+---
+# ===========================================================================
+# platform.yml — bootstrap cluster services needed before Argo CD exists.
+#
+#   ansible-playbook platform.yml
+#
+# MetalLB is installed first and its address pool is reconciled only after the
+# explicit safety gate in group_vars/all.yml confirms the router's DHCP boundary.
+# ===========================================================================
+
+- name: Bootstrap cluster platform services
+  hosts: control_plane
+  gather_facts: false
+  become: false
+  any_errors_fatal: true
+  roles:
+    - role: metallb
+      tags: [platform, metallb]

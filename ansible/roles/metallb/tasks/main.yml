@@ -1,0 +1,601 @@
+---
+# Install the official native-mode MetalLB manifest from the controller. The
+# components can safely run without an address pool; in that state they remain
+# idle and cannot claim a LAN address.
+
+- name: Validate MetalLB operator inputs
+  ansible.builtin.include_tasks: validate.yml
+
+- name: Locate the fetched admin kubeconfig
+  ansible.builtin.stat:
+    path: "{{ metallb_kubeconfig }}"
+  delegate_to: localhost
+  run_once: true
+  register: __metallb_kubeconfig_stat
+
+- name: The cluster must be bootstrapped before MetalLB
+  ansible.builtin.assert:
+    that:
+      - __metallb_kubeconfig_stat.stat.exists
+      - __metallb_kubeconfig_stat.stat.isreg
+    fail_msg: >-
+      {{ metallb_kubeconfig }} does not exist. Run `make cluster` first; the
+      control_plane role fetches the admin kubeconfig that this role uses.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Confirm every cluster node is Ready before adding a platform service
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_wait_argv + [
+           'wait', '--for=condition=Ready', 'nodes', '--all', '--timeout=30s'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  changed_when: false
+
+- name: Read kube-proxy configuration
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           '--namespace', 'kube-system', 'get', 'configmap', 'kube-proxy',
+           '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  register: __metallb_kube_proxy_raw
+  changed_when: false
+
+- name: Parse kube-proxy configuration
+  ansible.builtin.set_fact:
+    __metallb_kube_proxy_config: >-
+      {{ ((__metallb_kube_proxy_raw.stdout | from_json).data['config.conf'])
+         | from_yaml }}
+  run_once: true
+
+- name: IPVS kube-proxy must use strict ARP
+  ansible.builtin.assert:
+    that:
+      - >-
+        __metallb_kube_proxy_config.mode | default('') != 'ipvs'
+        or __metallb_kube_proxy_config.ipvs.strictARP | default(false) | bool
+    fail_msg: >-
+      kube-proxy is in IPVS mode with strictARP disabled. MetalLB requires
+      strictARP=true in that mode or multiple nodes can answer for the same
+      service address. Fix kube-proxy before installing MetalLB.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Read the installed MetalLB controller image
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           '--namespace', __metallb_namespace, 'get', 'deployment', 'controller',
+           '--ignore-not-found',
+           '--output', 'jsonpath={.spec.template.spec.containers[0].image}'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  register: __metallb_controller_image_before
+  changed_when: false
+
+- name: Read the installed MetalLB speaker image
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           '--namespace', __metallb_namespace, 'get', 'daemonset', 'speaker',
+           '--ignore-not-found',
+           '--output', 'jsonpath={.spec.template.spec.containers[0].image}'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  register: __metallb_speaker_image_before
+  changed_when: false
+
+- name: Read installed MetalLB CRDs
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           'get', 'customresourcedefinitions', '--output',
+           'jsonpath={.items[*].metadata.name}'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  register: __metallb_crds_before
+  changed_when: false
+
+- name: Read MetalLB namespace metadata
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           'get', 'namespace', __metallb_namespace, '--ignore-not-found',
+           '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  register: __metallb_namespace_before_raw
+  changed_when: false
+
+- name: Select current MetalLB installation markers
+  ansible.builtin.set_fact:
+    __metallb_live_crds: "{{ __metallb_crds_before.stdout.split() }}"
+    __metallb_manifest_marker: >-
+      {{ (__metallb_namespace_before_raw.stdout | from_json)
+           .get('metadata', {}).get('annotations', {}).get(
+             __metallb_manifest_annotation, '')
+         if __metallb_namespace_before_raw.stdout | length > 0
+         else '' }}
+  run_once: true
+
+- name: Decide whether the native MetalLB manifest needs reconciliation
+  ansible.builtin.set_fact:
+    __metallb_manifest_needs_reconcile: >-
+      {{ __metallb_controller_image_before.stdout != __metallb_controller_image
+         or __metallb_speaker_image_before.stdout != __metallb_speaker_image
+         or __metallb_expected_crds | difference(__metallb_live_crds)
+            | length > 0
+         or __metallb_manifest_marker != metallb_manifest_sha256 }}
+  run_once: true
+
+- name: Predict native-mode MetalLB reconciliation
+  ansible.builtin.debug:
+    msg: >-
+      MetalLB {{ metallb_version }} would be reconciled from its checksum-pinned
+      native manifest with digest-pinned controller and speaker images.
+  when:
+    - ansible_check_mode
+    - __metallb_manifest_needs_reconcile
+  changed_when: true
+  run_once: true
+
+- name: Predict recording the verified MetalLB manifest checksum
+  ansible.builtin.debug:
+    msg: >-
+      Namespace {{ __metallb_namespace }} would record the verified manifest
+      checksum so unchanged runs can avoid resetting MetalLB's generated
+      webhook certificate bundle.
+  when:
+    - ansible_check_mode
+    - __metallb_manifest_needs_reconcile
+  changed_when: true
+  run_once: true
+
+- name: Invalidate the prior success marker before manifest reconciliation
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           'annotate', 'namespace', __metallb_namespace,
+           __metallb_manifest_annotation ~ '-'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  when:
+    - not ansible_check_mode
+    - __metallb_manifest_needs_reconcile
+    - __metallb_manifest_marker | length > 0
+  changed_when: true
+
+- name: Reconcile the pinned native-mode MetalLB manifest
+  when:
+    - not ansible_check_mode
+    - __metallb_manifest_needs_reconcile
+  block:
+    - name: Create temporary storage for the MetalLB manifest
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: metallb-
+      delegate_to: localhost
+      become: false
+      register: __metallb_temp_dir
+      changed_when: false
+
+    - name: Download the checksum-pinned official MetalLB manifest
+      ansible.builtin.get_url:
+        url: "{{ __metallb_manifest_url }}"
+        dest: "{{ __metallb_temp_dir.path }}/metallb-native.yml"
+        checksum: "sha256:{{ metallb_manifest_sha256 }}"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    - name: Pin the MetalLB controller image by OCI digest
+      ansible.builtin.replace:
+        path: "{{ __metallb_temp_dir.path }}/metallb-native.yml"
+        regexp: >-
+          quay\.io/metallb/controller:v{{ metallb_version | regex_escape }}
+        replace: "{{ __metallb_controller_image }}"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    - name: Pin the MetalLB speaker image by OCI digest
+      ansible.builtin.replace:
+        path: "{{ __metallb_temp_dir.path }}/metallb-native.yml"
+        regexp: >-
+          quay\.io/metallb/speaker:v{{ metallb_version | regex_escape }}
+        replace: "{{ __metallb_speaker_image }}"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    - name: Read the staged MetalLB manifest
+      ansible.builtin.slurp:
+        path: "{{ __metallb_temp_dir.path }}/metallb-native.yml"
+      delegate_to: localhost
+      become: false
+      register: __metallb_manifest_raw
+
+    - name: Confirm both runtime images are pinned in the staged manifest
+      ansible.builtin.assert:
+        that:
+          - >-
+            (__metallb_manifest_raw.content | b64decode).count(
+              __metallb_controller_image
+            ) == 1
+          - >-
+            (__metallb_manifest_raw.content | b64decode).count(
+              __metallb_speaker_image
+            ) == 1
+        fail_msg: >-
+          The official manifest no longer contains the expected controller and
+          speaker image references. Review the upstream release instead of
+          applying a partly pinned manifest.
+        quiet: true
+      delegate_to: localhost
+      run_once: true
+
+    - name: Apply the verified MetalLB manifest
+      ansible.builtin.command:
+        argv: >-
+          {{ __metallb_kubectl_argv + [
+               'apply', '--filename',
+               __metallb_temp_dir.path ~ '/metallb-native.yml'
+             ] }}
+      delegate_to: localhost
+      become: false
+      register: __metallb_manifest_apply
+      changed_when: >-
+        'created' in __metallb_manifest_apply.stdout
+        or 'configured' in __metallb_manifest_apply.stdout
+
+  always:
+    - name: Remove the temporary MetalLB manifest
+      ansible.builtin.file:
+        path: "{{ __metallb_temp_dir.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      when:
+        - __metallb_temp_dir is defined
+        - __metallb_temp_dir.path is defined
+      changed_when: false
+
+- name: Wait for the MetalLB controller
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_wait_argv + [
+           '--namespace', __metallb_namespace, 'rollout', 'status',
+           'deployment/controller', '--timeout=300s'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: not ansible_check_mode
+  changed_when: false
+
+- name: Wait for a MetalLB speaker on every node
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_wait_argv + [
+           '--namespace', __metallb_namespace, 'rollout', 'status',
+           'daemonset/speaker', '--timeout=300s'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: not ansible_check_mode
+  changed_when: false
+
+- name: Read the deployed MetalLB controller image
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           '--namespace', __metallb_namespace, 'get', 'deployment', 'controller',
+           '--output', 'jsonpath={.spec.template.spec.containers[0].image}'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: not ansible_check_mode
+  register: __metallb_controller_image_current
+  changed_when: false
+
+- name: Read the deployed MetalLB speaker image
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           '--namespace', __metallb_namespace, 'get', 'daemonset', 'speaker',
+           '--output', 'jsonpath={.spec.template.spec.containers[0].image}'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: not ansible_check_mode
+  register: __metallb_speaker_image_current
+  changed_when: false
+
+- name: Confirm the live MetalLB images use the pinned digests
+  ansible.builtin.assert:
+    that:
+      - __metallb_controller_image_current.stdout == __metallb_controller_image
+      - __metallb_speaker_image_current.stdout == __metallb_speaker_image
+    fail_msg: >-
+      The live MetalLB workload does not use the expected immutable image
+      digests. Refuse to configure an address pool on an unpinned deployment.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+  when: not ansible_check_mode
+
+- name: Read MetalLB daemonsets
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           '--namespace', __metallb_namespace, 'get', 'daemonsets', '--output',
+           'jsonpath={.items[*].metadata.name}'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: not ansible_check_mode
+  register: __metallb_daemonsets
+  changed_when: false
+
+- name: Confirm the unused FRR-K8s backend is absent
+  ansible.builtin.assert:
+    that:
+      - __metallb_daemonsets.stdout.split() == ['speaker']
+    fail_msg: >-
+      Expected only the speaker DaemonSet, found
+      {{ __metallb_daemonsets.stdout.split() | join(', ') }}. The homelab uses
+      native Layer 2 mode and must not run the unused FRR-K8s backend.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+  when: not ansible_check_mode
+
+- name: Record the verified MetalLB manifest checksum on its namespace
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           'annotate', 'namespace', __metallb_namespace,
+           __metallb_manifest_annotation ~ '=' ~ metallb_manifest_sha256,
+           '--overwrite'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  when:
+    - not ansible_check_mode
+    - __metallb_manifest_needs_reconcile
+  changed_when: true
+
+- name: Read the managed Layer 2 advertisement
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           '--namespace', __metallb_namespace, 'get',
+           'l2advertisement.metallb.io', metallb_l2_advertisement_name,
+           '--ignore-not-found', '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: "'l2advertisements.metallb.io' in __metallb_live_crds"
+  register: __metallb_l2_current
+  changed_when: false
+
+- name: Read the managed IP address pool
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           '--namespace', __metallb_namespace, 'get',
+           'ipaddresspool.metallb.io', metallb_pool_name,
+           '--ignore-not-found', '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: "'ipaddresspools.metallb.io' in __metallb_live_crds"
+  register: __metallb_pool_current
+  changed_when: false
+
+- name: Compare the current and desired managed MetalLB resource state
+  ansible.builtin.include_tasks: pool_state.yml
+
+- name: Read Services before a disruptive pool change
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           'get', 'services', '--all-namespaces', '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when:
+    - __metallb_pool_exists
+    - >-
+      metallb_address_pool_state == 'absent'
+      or __metallb_pool_needs_reconcile
+  register: __metallb_services_raw
+  changed_when: false
+
+- name: Start the managed-pool allocation check with an empty service list
+  ansible.builtin.set_fact:
+    __metallb_allocated_services: []
+  run_once: true
+
+- name: Find Services that still use the managed pool
+  ansible.builtin.set_fact:
+    __metallb_allocated_services: >-
+      {{ __metallb_allocated_services
+         + [item.metadata.namespace ~ '/' ~ item.metadata.name] }}
+  loop: >-
+    {{ ((__metallb_services_raw.stdout
+         | default('{"items": []}', true)) | from_json)['items'] }}
+  loop_control:
+    label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
+  when:
+    - >-
+      (item.metadata.annotations | default({}, true)).get(
+        'metallb.io/ip-allocated-from-pool', ''
+      ) == metallb_pool_name
+  run_once: true
+
+- name: Refuse to strand addresses allocated from the managed pool
+  ansible.builtin.assert:
+    that:
+      - __metallb_allocated_services | length == 0
+    fail_msg: >-
+      Refusing to remove or change IPAddressPool {{ metallb_pool_name }} while
+      these Services still use it: {{ __metallb_allocated_services | join(', ') }}.
+      Delete or deliberately reassign those Services first, verify their old
+      addresses are no longer advertised, and then rerun this playbook.
+    quiet: true
+  when:
+    - >-
+      metallb_address_pool_state == 'absent'
+      or __metallb_pool_needs_reconcile
+  delegate_to: localhost
+  run_once: true
+
+- name: Predict removal of the managed Layer 2 advertisement
+  ansible.builtin.debug:
+    msg: "L2Advertisement {{ metallb_l2_advertisement_name }} would be removed."
+  when:
+    - ansible_check_mode
+    - metallb_address_pool_state == 'absent'
+    - __metallb_l2_exists
+  changed_when: true
+  run_once: true
+
+- name: Predict removal of the managed IP address pool
+  ansible.builtin.debug:
+    msg: "IPAddressPool {{ metallb_pool_name }} would be removed."
+  when:
+    - ansible_check_mode
+    - metallb_address_pool_state == 'absent'
+    - __metallb_pool_exists
+  changed_when: true
+  run_once: true
+
+- name: Remove the managed Layer 2 advertisement when disabled
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           '--namespace', __metallb_namespace, 'delete',
+           'l2advertisement.metallb.io', metallb_l2_advertisement_name
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  when:
+    - not ansible_check_mode
+    - metallb_address_pool_state == 'absent'
+    - __metallb_l2_exists
+  changed_when: true
+
+- name: Remove the managed IP address pool when disabled
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + [
+           '--namespace', __metallb_namespace, 'delete',
+           'ipaddresspool.metallb.io', metallb_pool_name
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  when:
+    - not ansible_check_mode
+    - metallb_address_pool_state == 'absent'
+    - __metallb_pool_exists
+  changed_when: true
+
+- name: Predict the confirmed Layer 2 address-pool change
+  ansible.builtin.debug:
+    msg: >-
+      IPAddressPool {{ metallb_pool_name }} and L2Advertisement
+      {{ metallb_l2_advertisement_name }} would be reconciled for
+      {{ metallb_address_ranges | join(', ') }}.
+  when:
+    - ansible_check_mode
+    - metallb_address_pool_state == 'present'
+    - >-
+      __metallb_pool_needs_reconcile
+      or __metallb_l2_needs_reconcile
+  changed_when: true
+  run_once: true
+
+- name: Reconcile the confirmed LAN address pool and Layer 2 advertisement
+  ansible.builtin.command:
+    argv: >-
+      {{ __metallb_kubectl_argv + ['apply', '--filename', '-'] }}
+    stdin: |
+      apiVersion: metallb.io/v1beta1
+      kind: IPAddressPool
+      metadata:
+        name: {{ metallb_pool_name }}
+        namespace: {{ __metallb_namespace }}
+      spec:
+        addresses:
+      {{ metallb_address_ranges | to_nice_yaml(indent=2) | indent(4, true) }}
+        autoAssign: true
+        avoidBuggyIPs: false
+      ---
+      apiVersion: metallb.io/v1beta1
+      kind: L2Advertisement
+      metadata:
+        name: {{ metallb_l2_advertisement_name }}
+        namespace: {{ __metallb_namespace }}
+      spec:
+        ipAddressPools:
+          - {{ metallb_pool_name }}
+  delegate_to: localhost
+  run_once: true
+  when:
+    - not ansible_check_mode
+    - metallb_address_pool_state == 'present'
+    - >-
+      __metallb_pool_needs_reconcile
+      or __metallb_l2_needs_reconcile
+  register: __metallb_pool_apply
+  changed_when: >-
+    'created' in __metallb_pool_apply.stdout
+    or 'configured' in __metallb_pool_apply.stdout
+
+- name: Report that MetalLB is installed but deliberately idle
+  ansible.builtin.debug:
+    msg: >-
+      MetalLB {{ metallb_version }} is healthy in native Layer 2 mode. It cannot
+      allocate an address yet because metallb_address_pool_state=absent. Confirm
+      the FRITZ!Box DHCP range before enabling the pool.
+  when:
+    - not ansible_check_mode
+    - metallb_address_pool_state == 'absent'
+  run_once: true
+
+- name: Report the active MetalLB address range
+  ansible.builtin.debug:
+    msg: >-
+      MetalLB {{ metallb_version }} is healthy and advertises
+      {{ metallb_address_ranges | join(', ') }} through Layer 2 ARP.
+  when:
+    - not ansible_check_mode
+    - metallb_address_pool_state == 'present'
+  run_once: true
