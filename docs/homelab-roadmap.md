@@ -89,7 +89,7 @@ Each phase ends in a **milestone** you can verify. Do them in order; don't skip 
 
 - On all nodes: install **containerd**, disable **swap**, set the required kernel networking sysctls (`br_netfilter`, `overlay`, IP forwarding), install `kubelet`/`kubeadm`/`kubectl`.
 - **Stage A:** `kubeadm init` on node 1 (single control-plane), join nodes 2 and 3 as **workers**. Simpler first cluster — get the core flow working before HA.
-  - ⚠️ **Pass `--control-plane-endpoint=<dns-name-or-future-VIP>` even now**, e.g. `k8s.lab.example`. If you `init` without it, promoting to HA later means regenerating certs and effectively rebuilding the cluster. Costs nothing today, saves a painful redo at Stage B.
+  - ⚠️ **Pass `--control-plane-endpoint=<dns-name-or-future-VIP>` even now**, here `k8s.home.arpa`. If you `init` without it, promoting to HA later means regenerating certs and effectively rebuilding the cluster. Costs nothing today, saves a painful redo at Stage B.
   - **Control-plane taint:** by default node-1 won't run your workloads. Leave that taint while learning (2 workers is plenty); remove it later with `kubectl taint nodes node-1 node-role.kubernetes.io/control-plane-` to reclaim its 16 GB / 4 cores.
 - Install the pinned **Cilium CNI** chart. Nodes won't go `Ready` until the CNI is up.
 - Copy the admin kubeconfig to your laptop; install `kubectl` + `k9s` locally.
@@ -104,7 +104,7 @@ Each phase ends in a **milestone** you can verify. Do them in order; don't skip 
 - **Ingress:** install **ingress-nginx**.
 - **Storage:** install **local-path-provisioner** (the default StorageClass). Longhorn is a later, optional upgrade — note the 256 GB limit; watch `df -h`.
 - **Hostname access (DNS + TLS):** point a **local DNS server** (AdGuard Home/dnsmasq wildcard, or Pi-hole) at the ingress MetalLB IP so apps resolve by name; add **cert-manager** for HTTPS and optionally **ExternalDNS** to auto-create records from Ingress objects. (This is the "internal CDN" ask — it's DNS + ingress, not a CDN. Details in `linux-k8s-foundations.md` §9.)
-- **Milestone:** deploy an app, give it a PVC, reach it at `https://app.lab.example` by name on the LAN.
+- **Milestone:** deploy an app, give it a PVC, reach it at `https://app.home.arpa` by name on the LAN.
 
 ### Phase 3 — Cluster hygiene
 *Goal: backups, GitOps, secrets done right. ~1–2 evenings.*

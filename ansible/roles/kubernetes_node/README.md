@@ -37,10 +37,13 @@ resulting kubelet failure does not mention cgroups anywhere. The role patches it
 and then *verifies* the patch landed, because the `regex_replace` becomes a
 silent no-op if a future containerd renames the key.
 
-**Unhold before install, hold after.** apt cannot move a held package, so a
-deliberate version bump in `group_vars` would be silently ignored if the holds
-were left in place. Both operations are conditional on current state, so a
-converged run reports no change instead of churning seven changes per node.
+**Change through persistent holds, then repair them.** Exact versions in
+`group_vars` are deliberate changes, so the apt tasks use
+`allow_change_held_packages` rather than temporarily unholding packages.
+containerd is re-held immediately after its install, and the final idempotent
+task re-holds every managed package as a repair/safety pass. Package installation
+and hold updates are not atomic; rerunning the role repairs an interruption at
+that boundary.
 
 **`--node-ip` is pinned.** These machines have both WiFi and Ethernet, so left to
 itself the kubelet may advertise an address that is not the `ansible_host`

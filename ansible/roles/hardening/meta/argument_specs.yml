@@ -35,6 +35,24 @@ argument_specs:
         type: list
         elements: str
         required: true
+      kubernetes_api_allowed_from:
+        description:
+          - Source networks in CIDR form allowed to reach the Kubernetes API on port 6443.
+          - Applied only to control_plane_host; peer nodes are already trusted through node_ips.
+        type: list
+        elements: str
+        required: true
+      control_plane_host:
+        description:
+          - Inventory hostname that receives the Kubernetes API firewall rule.
+        type: str
+        required: true
+      pod_cidr:
+        description:
+          - Pod network allowed to reach the Kubernetes API on port 6443.
+          - Applied only to control_plane_host for in-cluster API clients such as CoreDNS.
+        type: str
+        required: true
       tailscale_enabled:
         description:
           - Whether to install tailnet-specific firewall rules.

@@ -264,21 +264,21 @@ Earlier we suggested **tainting one node for the agent sandboxes** (isolation, s
 
 ## 9. Reaching apps by hostname (internal DNS + ingress — not a CDN)
 
-Quick terminology fix: what you want — typing `myapp.lab.example` instead of `10.0.0.50:30080` — is **DNS + ingress + TLS**, not a CDN. A CDN geographically caches static content for distant users; irrelevant on a home LAN. (If you ever serve heavy static assets to the public you can add caching later — separate concern.) Here's the homelab-standard stack, and most of it we already planned:
+Quick terminology fix: what you want — typing `myapp.home.arpa` instead of `10.0.0.50:30080` — is **DNS + ingress + TLS**, not a CDN. A CDN geographically caches static content for distant users; irrelevant on a home LAN. (If you ever serve heavy static assets to the public you can add caching later — separate concern.) Here's the homelab-standard stack, and most of it we already planned:
 
 ### The moving parts
-1. **ingress-nginx** (already in Phase 2.5) — the HTTP router. It reads the **Host header** and sends `app-a.lab.example` to Service A, `app-b.lab.example` to Service B. One entry point, many apps by name.
+1. **ingress-nginx** (already in Phase 2.5) — the HTTP router. It reads the **Host header** and sends `app-a.home.arpa` to Service A, `app-b.home.arpa` to Service B. One entry point, many apps by name.
 2. **MetalLB** (already planned) — gives ingress-nginx **one stable LAN IP** (a `LoadBalancer` service). All your hostnames point here.
 3. **A DNS server that maps names → that IP.** This is the missing piece:
-   - **Pick a domain.** Best practice: a **real subdomain you own** (e.g. `*.lab.borna.dev`) so you can also get valid TLS certs. A made-up `.lab`/`.home` works too but you'll use a private CA for certs.
-   - **Run a local resolver** on the LAN: **AdGuard Home** or **dnsmasq** (both support **wildcard** records — `*.lab.example → <ingress IP>`), or **Pi-hole** (no native wildcard, so pair it with ExternalDNS to create per-app records). Point your router/devices at it.
-4. **cert-manager** — issues **TLS** so `https://app.lab.example` is trusted, not a warning. Use Let's Encrypt **DNS-01** (needs the real domain) for valid certs on internal names, or an internal CA for a made-up domain.
+   - **Use the selected private namespace:** `*.home.arpa`. It is reserved for residential networks and uses a private CA for certificates. A real subdomain you own remains an option later if you want publicly trusted certificates.
+   - **Run a local resolver** on the LAN: **AdGuard Home** or **dnsmasq** (both support **wildcard** records — `*.home.arpa → <ingress IP>`), or **Pi-hole** (no native wildcard, so pair it with ExternalDNS to create per-app records). Point your router/devices at it.
+4. **cert-manager** — issues **TLS** so `https://app.home.arpa` is trusted, not a warning. Use an internal CA for `home.arpa`; Let's Encrypt DNS-01 becomes an option only if you later use a domain you own.
 
 ### Automate it (GitOps-friendly, optional)
-- **ExternalDNS** watches your **Ingress** objects and **auto-creates the DNS records** in Pi-hole/AdGuard/bind/Cloudflare. Result: you deploy an app with `host: app.lab.example`, and the record + cert appear automatically — no manual DNS edits. This is the clean end-state.
+- **ExternalDNS** watches your **Ingress** objects and **auto-creates the DNS records** in Pi-hole/AdGuard/bind/Cloudflare. Result: you deploy an app with `host: app.home.arpa`, and the record + cert appear automatically — no manual DNS edits. This is the clean end-state.
 
 ### Reaching them remotely (over Tailscale)
-- Use Tailscale **Split DNS**: tell your tailnet to forward `lab.example` queries to your home DNS server. Then the **same hostnames resolve whether you're home or away**, routed over the tunnel to the ingress IP. (Tailscale's MagicDNS also names your devices; Split DNS is what makes your *app* names work everywhere.)
+- Use Tailscale **Split DNS**: tell your tailnet to forward `home.arpa` queries to your home DNS server. Then the **same hostnames resolve whether you're home or away**, routed over the tunnel to the ingress IP. (Tailscale's MagicDNS also names your devices; Split DNS is what makes your *app* names work everywhere.)
 
 ### Don't confuse this with CoreDNS
 **CoreDNS** (built into kubeadm) is the cluster's *internal* DNS for **pod-to-pod** service discovery (`svc.namespace.svc.cluster.local`). It is **not** what your laptop/browser uses — that's the external DNS server above. Two different resolvers, two different jobs.

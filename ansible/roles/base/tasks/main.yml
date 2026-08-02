@@ -15,7 +15,7 @@
 # regex_escape matters: the endpoint contains dots, which would otherwise be
 # regex wildcards and could match an unrelated line. The (^|\s)…(\s|$) anchors
 # match the name as a whole token, so an existing entry that carries aliases
-# ("<ip> k8s.lab.example k8s") is updated rather than duplicated.
+# ("<ip> <endpoint> k8s") is updated rather than duplicated.
 - name: Make the control-plane endpoint resolvable on every node
   ansible.builtin.lineinfile:
     path: /etc/hosts

@@ -42,7 +42,7 @@ run may pull a kernel. `site.yml` is `serial: 1` + `any_errors_fatal` so a bad c
 stops at the first node instead of hitting all three. Nothing reboots automatically;
 the base role reports pending reboots and you drain by hand, one node at a time.
 
-**`make status` needs `k8s.lab.example` to resolve on your laptop.** The nodes get an
+**`make status` needs `k8s.home.arpa` to resolve on your laptop.** The nodes get an
 `/etc/hosts` entry from the `base` role; your laptop does not. Run `make hosts` once.
 
 Run playbooks directly from `ansible/` dir when using tags:

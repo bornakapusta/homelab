@@ -66,26 +66,6 @@
 - name: Flush handlers so sysctls apply before containerd starts
   ansible.builtin.meta: flush_handlers
 
-# --- package holds ---------------------------------------------------------
-# Unhold BEFORE any install below, otherwise a deliberate version bump in
-# group_vars is silently ignored: apt cannot move a held package. The holds are
-# re-applied at the end of this role.
-#
-# Conditional on the current state so a converged run reports no change — the
-# hold/unhold pair used to churn 7 changes per node every single run, which
-# buried the changes that actually mattered.
-- name: Read current package hold state
-  ansible.builtin.command: apt-mark showhold
-  register: __kubernetes_node_apt_holds
-  changed_when: false
-
-- name: Unhold managed packages so deliberate version changes can apply
-  ansible.builtin.dpkg_selections:
-    name: "{{ item }}"
-    selection: install
-  loop: "{{ kubernetes_node_managed_held_packages }}"
-  when: item in __kubernetes_node_apt_holds.stdout_lines
-
 # --- containerd ------------------------------------------------------------
 # Installed from Docker's repo, which carries a current containerd.
 - name: Create apt keyring directory
@@ -119,6 +99,14 @@
     update_cache: true
     cache_valid_time: 3600
     allow_downgrade: true
+    # An exact version in group_vars is an intentional change. Permit apt to
+    # apply it without first removing the persistent package hold.
+    allow_change_held_packages: true
+
+- name: Hold containerd immediately after installation
+  ansible.builtin.dpkg_selections:
+    name: containerd.io
+    selection: hold
 
 - name: Ensure containerd config directory exists
   ansible.builtin.file:
@@ -206,16 +194,17 @@
     update_cache: true
     cache_valid_time: 3600
     allow_downgrade: true
+    allow_change_held_packages: true
 
 # Hold everything so an unrelated `apt upgrade` — which the base role runs on
 # every site.yml run — can never move these. containerd is included because an
-# unintended upgrade resets SystemdCgroup. Conditional so a converged run is quiet.
+# unintended upgrade resets SystemdCgroup. dpkg_selections checks the current
+# selection itself, so this remains quiet on a converged run.
 - name: Hold managed package versions
   ansible.builtin.dpkg_selections:
     name: "{{ item }}"
     selection: hold
   loop: "{{ kubernetes_node_managed_held_packages }}"
-  when: item not in __kubernetes_node_apt_holds.stdout_lines
 
 # --- kubelet ---------------------------------------------------------------
 # Pin the address the kubelet advertises. These machines have both WiFi and

@@ -20,7 +20,7 @@ unattended security upgrades that never reboot on their own.
 ## Arguments
 
 Declared and validated in [`meta/argument_specs.yml`](meta/argument_specs.yml).
-All seven are required, with no defaults on purpose: a plausible-looking default
+All ten are required, with no defaults on purpose: a plausible-looking default
 for any of them would silently harden the wrong thing.
 
 - `ssh_allowed_users` — rendered into sshd's `AllowUsers`. **Must** contain the
@@ -33,6 +33,14 @@ for any of them would silently harden the wrong thing.
   those rules.
 - `ingress_allowed_from` — source networks for ports 80/443. It stays separate
   so enabling remote administration does not expose applications tailnet-wide.
+- `kubernetes_api_allowed_from` — source networks for Kubernetes API port 6443.
+  The rule is installed only on `control_plane_host`; Helm and kubectl on the
+  Ansible controller need it, while peer nodes are already covered by `node_ips`.
+- `control_plane_host` — inventory hostname that receives the API rule.
+- `pod_cidr` — pod network allowed to reach API port 6443 on
+  `control_plane_host`. Traffic sent to the Kubernetes ClusterIP is translated
+  to the control-plane LAN address but keeps its pod source IP, so this narrow
+  input rule is required by CoreDNS and other in-cluster API clients.
 - `tailscale_enabled` — enables the interface-bound tailnet SSH rule and UDP
   transport rule.
 - `tailscale_cidr` — the canonical management range. SSH from this source is
@@ -107,6 +115,9 @@ produced a recoverable copy. See [`../../molecule/hardening/`](../../molecule/ha
     ssh_allowed_users: [borna, ansible]
     ssh_allowed_from: ["192.0.2.0/24"]
     ingress_allowed_from: ["192.0.2.0/24"]
+    kubernetes_api_allowed_from: ["192.0.2.0/24"]
+    control_plane_host: node-1
+    pod_cidr: "10.244.0.0/16"
     tailscale_enabled: true
     tailscale_cidr: "100.64.0.0/10"
     tailscale_udp_port: 41641

@@ -42,9 +42,11 @@ argument_specs:
         required: true
       kubernetes_node_managed_held_packages:
         description:
-          - Packages held back from apt upgrade so a patch run cannot break the cluster.
-          - One list drives both the unhold at role start and the hold at role end,
-            so the two can never drift apart.
+          - Packages managed as persistent apt holds so a patch run cannot break the cluster.
+          - Exact-version installs use allow_change_held_packages instead of an unhold phase.
+          - >-
+            containerd.io is re-held immediately after its install, and the full list
+            is re-held at role end as a repair and safety step.
         type: list
         elements: str
         required: false

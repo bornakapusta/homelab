@@ -81,12 +81,18 @@ ssh_allowed_from:
 ingress_allowed_from:
   - 192.168.178.0/24
 
+# Clients that administer Kubernetes (the Ansible controller's Helm/kubectl)
+# must reach the API server. Peer nodes already have full access through
+# node_ips; this rule is rendered only on the control-plane host.
+kubernetes_api_allowed_from:
+  - 192.168.178.0/24
+
 # MUST be a DNS name that resolves to the control-plane node. The nodes get an
 # /etc/hosts entry automatically (base role); YOUR LAPTOP DOES NOT — run
 # `make hosts` for the line to add, or `make status` will fail to resolve it.
 # Using a NAME rather than an IP is what lets you add control-plane nodes
 # later without regenerating certificates. Do not skip this.
-control_plane_endpoint: k8s.lab.example
+control_plane_endpoint: k8s.home.arpa
 
 # Pod network. Must NOT overlap your home LAN (192.168.178.0/24).
 # kubeadm assigns a slice of this range to each node; Cilium consumes those

@@ -34,6 +34,7 @@
       - tailscale_key_sha256 is defined and tailscale_key_sha256 | length > 0
       - ssh_allowed_from | default([]) | length > 0
       - ingress_allowed_from | default([]) | length > 0
+      - kubernetes_api_allowed_from | default([]) | length > 0
       - ssh_allowed_users | default([]) | length > 0
     fail_msg: A required variable in group_vars/all.yml is missing or empty.
     quiet: true

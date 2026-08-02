@@ -78,6 +78,29 @@
     src: "{{ item }}"
   loop: "{{ node_ips }}"
 
+# Helm and kubectl run on the Ansible controller, not on a peer node. Without a
+# separate client rule, kubeadm succeeds but the controller times out when it
+# tries to install the CNI through the API server.
+- name: Allow Kubernetes API clients on the control plane
+  community.general.ufw:
+    rule: allow
+    src: "{{ item }}"
+    port: "6443"
+    proto: tcp
+  loop: "{{ kubernetes_api_allowed_from }}"
+  when: inventory_hostname == control_plane_host
+
+# In-cluster clients reach the API through its ClusterIP. kube-proxy DNATs
+# that traffic to this host's LAN address while preserving the Pod source IP,
+# so it traverses UFW's INPUT chain rather than only its FORWARD chain.
+- name: Allow the Pod network to reach the Kubernetes API on the control plane
+  community.general.ufw:
+    rule: allow
+    src: "{{ pod_cidr }}"
+    port: "6443"
+    proto: tcp
+  when: inventory_hostname == control_plane_host
+
 - name: Allow SSH from approved networks
   community.general.ufw:
     rule: allow

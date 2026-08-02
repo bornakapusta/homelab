@@ -115,10 +115,10 @@ In one paragraph: your laptop runs **herdr** and reaches the cluster over **Tail
 - **Done:** an app with a PVC is reachable via MetalLB + Ingress on the LAN.
 
 ### Phase 2.75 — Hostname access (internal DNS + TLS)
-- [ ] Pick a domain (own subdomain preferred, e.g. `*.lab.example`); run a **local DNS** (AdGuard Home/dnsmasq wildcard, or Pi-hole) → ingress MetalLB IP.
+- [ ] Serve `*.home.arpa` from **local DNS** (AdGuard Home/dnsmasq wildcard, or Pi-hole) → ingress MetalLB IP.
 - [ ] Install **cert-manager** for HTTPS; optionally **ExternalDNS** to auto-create records from Ingress objects.
 - [ ] Later: **Tailscale Split DNS** so the same names resolve remotely.
-- **Done:** `https://app.lab.example` reaches an app by name with a valid cert.
+- **Done:** `https://app.home.arpa` reaches an app by name with a locally trusted cert.
 
 ### Phase 3 — Cluster hygiene
 - [ ] **etcd** snapshot save + rehearse a restore.

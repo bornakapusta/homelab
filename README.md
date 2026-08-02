@@ -87,7 +87,7 @@ All nodes should reach `Ready` within a minute or two of Cilium starting.
 
 ## Important notes
 
-**`control_plane_endpoint` must resolve.** Point a DNS name (e.g. `k8s.lab.example`) at
+**`control_plane_endpoint` must resolve.** Point a DNS name (here, `k8s.home.arpa`) at
 node-1's IP, or add it to `/etc/hosts` on your laptop and the nodes. Using a *name* now is
 what lets you add control-plane nodes later without regenerating certificates.
 

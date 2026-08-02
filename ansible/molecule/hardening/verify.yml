@@ -12,6 +12,10 @@
       - 100.64.0.0/10
     ingress_allowed_from:
       - 192.0.2.0/24
+    kubernetes_api_allowed_from:
+      - 192.0.2.0/24
+    pod_cidr: 10.244.0.0/16
+    control_plane_host: molecule-hardening
     tailscale_enabled: true
     tailscale_cidr: 100.64.0.0/10
     tailscale_udp_port: 41641
@@ -103,6 +107,38 @@
         quiet: true
       loop: "{{ node_ips }}"
 
+    - name: Every desired Kubernetes API source must have one exact allow rule
+      ansible.builtin.assert:
+        that:
+          - __exact_kubernetes_api_rules | length == 1
+        fail_msg: >-
+          UFW must contain exactly one TCP 6443 ALLOW IN rule for {{ item }}.
+        quiet: true
+      loop: "{{ __desired_kubernetes_api_sources }}"
+      vars:
+        __desired_kubernetes_api_sources: >-
+          {{ (kubernetes_api_allowed_from + [pod_cidr]) | unique | list }}
+        __exact_kubernetes_api_rules: >-
+          {{ verify_ufw_status.stdout_lines
+             | select('match', '^6443/tcp\s+ALLOW IN\s+' ~ (item | regex_escape) ~ '\s*$')
+             | list }}
+
+    - name: The complete Kubernetes API rule set must equal the desired sources
+      ansible.builtin.assert:
+        that:
+          - __kubernetes_api_rules | length == __desired_kubernetes_api_sources | length
+        fail_msg: >-
+          UFW TCP 6443 rules must exactly match the unique approved client and
+          Pod CIDR sources; DENY, duplicate, unrelated, or stale rules are not allowed.
+        quiet: true
+      vars:
+        __desired_kubernetes_api_sources: >-
+          {{ (kubernetes_api_allowed_from + [pod_cidr]) | unique | list }}
+        __kubernetes_api_rules: >-
+          {{ verify_ufw_status.stdout_lines
+             | select('match', '^6443/tcp\s+')
+             | list }}
+
     - name: Tailnet access must be SSH-only
       ansible.builtin.assert:
         that:
@@ -178,3 +214,37 @@
     - name: The backup must be inert — sshd still accepts the config
       ansible.builtin.command: sshd -t
       changed_when: false
+
+    - name: Delete desired API rules before exercising the worker branch
+      community.general.ufw:
+        rule: allow
+        src: "{{ item }}"
+        port: "6443"
+        proto: tcp
+        delete: true
+      loop: "{{ (kubernetes_api_allowed_from + [pod_cidr]) | unique | list }}"
+
+    - name: Assign a different control-plane host for the worker branch
+      ansible.builtin.set_fact:
+        control_plane_host: molecule-control-plane
+
+    - name: Re-apply hardening with this host assigned as a worker
+      ansible.builtin.include_role:
+        name: hardening
+
+    - name: Read the worker ufw ruleset
+      ansible.builtin.command: ufw status verbose
+      register: verify_worker_ufw_status
+      changed_when: false
+
+    - name: A worker must have no Kubernetes API rules
+      ansible.builtin.assert:
+        that:
+          - __worker_kubernetes_api_rules | length == 0
+        fail_msg: "A worker must not receive any TCP 6443 UFW rules."
+        quiet: true
+      vars:
+        __worker_kubernetes_api_rules: >-
+          {{ verify_worker_ufw_status.stdout_lines
+             | select('match', '^6443/tcp\s+')
+             | list }}
