@@ -1,0 +1,88 @@
+---
+# Controller-only validation is separate so `make check` can exercise every
+# safety gate without requiring a live Kubernetes API server.
+
+- name: Validate Traefik pins, names, and MetalLB intent
+  ansible.builtin.assert:
+    that:
+      - traefik_chart_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+      - traefik_chart_sha256 is match('^[0-9a-f]{64}$')
+      - traefik_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+      - traefik_image_sha256 is match('^[0-9a-f]{64}$')
+      - traefik_release_name | length <= 53
+      - >-
+        traefik_release_name is match(
+          '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+        )
+      - traefik_ingress_class_name | length <= 63
+      - >-
+        traefik_ingress_class_name is match(
+          '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+        )
+      - metallb_pool_name | length <= 63
+      - >-
+        metallb_pool_name is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+      - metallb_address_pool_state == 'present'
+      - metallb_address_pool_confirmed
+      - metallb_address_ranges | length > 0
+    fail_msg: >-
+      Traefik's release pins or names are invalid, or MetalLB is not explicitly
+      enabled with a confirmed non-empty address pool. Ingress must not claim a
+      LAN address until that prerequisite is safe.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Check that the fixed Traefik address belongs to the MetalLB pool
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -c
+      - |
+        import ipaddress
+        import json
+        import sys
+
+        candidate = ipaddress.ip_address(sys.argv[1])
+        if candidate.version != 4:
+            raise ValueError("Traefik address must be IPv4")
+
+        for value in json.loads(sys.argv[2]):
+            if "-" in value:
+                first_raw, last_raw = value.split("-", 1)
+                first = ipaddress.ip_address(first_raw)
+                last = ipaddress.ip_address(last_raw)
+                if first.version != 4 or last.version != 4:
+                    raise ValueError("MetalLB range must be IPv4")
+                if int(first) > int(last):
+                    raise ValueError("MetalLB range must be ascending")
+                if int(first) <= int(candidate) <= int(last):
+                    sys.exit(0)
+            else:
+                network = ipaddress.ip_network(value, strict=False)
+                if network.version != 4:
+                    raise ValueError("MetalLB network must be IPv4")
+                if candidate in network:
+                    sys.exit(0)
+
+        raise ValueError("Traefik address is outside every MetalLB range")
+      - "{{ traefik_load_balancer_ip }}"
+      - "{{ metallb_address_ranges | to_json }}"
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  register: __traefik_address_validation
+  failed_when: false
+  changed_when: false
+
+- name: The fixed Traefik address must be valid and inside the MetalLB pool
+  ansible.builtin.assert:
+    that:
+      - __traefik_address_validation.rc == 0
+    fail_msg: >-
+      traefik_load_balancer_ip={{ traefik_load_balancer_ip }} is not a valid
+      IPv4 address inside metallb_address_ranges. Choose one confirmed address
+      from that pool; do not use a node, router, DHCP, or broadcast address.
+    quiet: true
+  delegate_to: localhost
+  run_once: true

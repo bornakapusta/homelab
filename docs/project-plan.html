@@ -130,7 +130,7 @@
     <tr><td>Kubernetes</td><td><strong>kubeadm</strong> (upstream/vanilla)</td><td>Learn the real thing; start 1 CP + 2 workers → 3 CP + kube-vip</td></tr>
     <tr><td>Runtime / CNI</td><td>containerd · Cilium</td><td>Upstream Kubernetes, eBPF networking</td></tr>
     <tr><td>Storage</td><td>local-path (→ Longhorn later)</td><td>Simple start; watch SSD space</td></tr>
-    <tr><td>Ingress / LB</td><td>ingress-nginx + <strong>MetalLB</strong></td><td>Bare-metal LoadBalancer + ingress</td></tr>
+    <tr><td>Ingress / LB</td><td>Traefik + <strong>MetalLB</strong></td><td>Maintained HTTP ingress + bare-metal LoadBalancer</td></tr>
     <tr><td>Hostname access</td><td>Local DNS (AdGuard/dnsmasq wildcard) → ingress IP; ExternalDNS + cert-manager; Tailscale Split DNS</td><td>Reach apps by name over HTTPS (the "internal CDN" ask — really DNS+ingress)</td></tr>
     <tr><td>IaC</td><td>cloud-init/autoinstall → <strong>Ansible</strong> → <strong>Argo CD</strong></td><td>Identical installs, fleet config, GitOps</td></tr>
     <tr><td>Secrets</td><td>kubectl Secrets → <strong>SOPS / Sealed Secrets</strong></td><td>Safe to keep in git</td></tr>
@@ -184,7 +184,7 @@
 
   <div class="card"><h3>Phase 2.5 — Batteries</h3>
     <div class="goal">What kubeadm omits.</div>
-    <ul><li>MetalLB, ingress-nginx</li><li>local-path storage</li></ul>
+    <ul><li>MetalLB, Traefik</li><li>local-path storage</li></ul>
     <div class="done">Done: app+PVC reachable via ingress</div></div>
 
   <div class="card"><h3>Phase 2.75 — Hostname access</h3>

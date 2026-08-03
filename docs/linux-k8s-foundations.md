@@ -44,7 +44,7 @@ kubeadm is "Kubernetes the hard way (lite)." Versus k3s you take on:
 
 - Installing the selected **Cilium CNI** yourself for pod networking and NetworkPolicy.
 - Installing **storage** yourself (**local-path-provisioner** to start; Longhorn later).
-- Installing **ingress + bare-metal load balancer** yourself (**ingress-nginx** + **MetalLB** — k3s gave you Traefik/ServiceLB for free).
+- Installing **ingress + bare-metal load balancer** yourself (**Traefik** + **MetalLB** — k3s would have bundled Traefik/ServiceLB).
 - **HA control plane needs a virtual IP** in front of the API servers (**kube-vip** is the homelab standard). This is the single biggest added complexity.
 - **Certificate maintenance:** kubeadm control-plane certs **expire after 1 year** — you'll renew them (kubelet certs auto-rotate).
 - **Manual version upgrades** node-by-node.
@@ -112,7 +112,7 @@ Single 256 GB NVMe per node. Recommendations:
 Things to fix or add now that we're on kubeadm, so the build is sound:
 
 1. **Control-plane HA needs kube-vip** (or keepalived+haproxy) for the API-server virtual IP. Added to the ladder above — start single-CP, add this at Stage B.
-2. **Pick your stack add-ons deliberately (kubeadm gives you none):** CNI = Cilium; storage = local-path-provisioner → Longhorn later; ingress = ingress-nginx; bare-metal LB = **MetalLB** (needed for `LoadBalancer` services on your LAN).
+2. **Pick your stack add-ons deliberately (kubeadm gives you none):** CNI = Cilium; storage = local-path-provisioner → Longhorn later; ingress = Traefik; bare-metal LB = **MetalLB** (needed for `LoadBalancer` services on your LAN). Traefik replaces ingress-nginx, which retired in March 2026.
 3. **GitOps from day one.** Keep every manifest in a **git repo** (later: Argo CD or Flux). Makes any rebuild reproducible instead of a from-scratch redo.
 4. **Don't put raw Secrets in git.** Since you're going GitOps, use **SOPS** or **Sealed Secrets** for the Anthropic/OpenAI keys. Plain `kubectl` Secrets are fine while local-only, but adopt encryption before anything hits git.
 5. **etcd backups.** Learn `etcdctl snapshot save` and schedule it (a CronJob or a host cron). This is a core reason to run kubeadm — actually practice restore once.
@@ -124,7 +124,7 @@ Things to fix or add now that we're on kubeadm, so the build is sound:
 
 ### Revised phase impact (supersedes roadmap Phases 2–3)
 - **Phase 2** becomes: install containerd + kubeadm/kubelet/kubectl, disable swap, kernel networking sysctls, `kubeadm init` (single CP first), install **Cilium CNI**.
-- **New Phase 2.5:** install **MetalLB** + **ingress-nginx** + **local-path-provisioner** (the batteries k3s used to include).
+- **New Phase 2.5:** install **MetalLB** + **Traefik** + **local-path-provisioner** (the batteries k3s would otherwise include).
 - **Phase 3** adds: etcd snapshot backups, GitOps repo, SOPS/Sealed Secrets. HA (3× CP + kube-vip) is an explicit later step, not the starting point.
 
 Everything downstream — the Rails sandbox image, Agent Sandbox warm pool, herdr, Tailscale — is unchanged by moving to kubeadm.
@@ -188,7 +188,7 @@ Playbooks are **idempotent** (safe to re-run) and version-controlled, so a node 
   - **Kubespray** (kubernetes-sigs) — a mature Ansible project that does OS prep + containerd + kubeadm + CNI in one resumable command (~15 min to a cluster). Production-grade and reliable, but it *abstracts* the details, so it fights the learning goal. Keep it as a reference / "graduate to it" option, not the first pass.
 
 ### Layer 3 — Everything inside the cluster: Argo CD (GitOps)
-Ansible's job ends at "a working cluster exists." From there, **Argo CD** (already decided, §5) syncs all in-cluster state from git — platform components (MetalLB, ingress-nginx, Agent Sandbox), your hosted apps, namespaces, quotas, NetworkPolicies. Change git → cluster converges. No `kubectl apply` by hand.
+Ansible's job ends at "a working cluster exists." From there, **Argo CD** (already decided, §5) syncs all in-cluster state from git — platform components (MetalLB, Traefik, Agent Sandbox), your hosted apps, namespaces, quotas, NetworkPolicies. Change git → cluster converges. No `kubectl apply` by hand.
 
 ### Where Terraform fits (mostly: not yet)
 Terraform provisions *infrastructure* (VMs, cloud resources, DNS). Your three boxes already exist, so Terraform has little to do on bare metal now. It becomes useful later for things with an API — Tailscale ACLs, Cloudflare DNS, or if you ever add Hetzner VMs. Skip it for the initial build.
@@ -267,8 +267,8 @@ Earlier we suggested **tainting one node for the agent sandboxes** (isolation, s
 Quick terminology fix: what you want — typing `myapp.home.arpa` instead of `10.0.0.50:30080` — is **DNS + ingress + TLS**, not a CDN. A CDN geographically caches static content for distant users; irrelevant on a home LAN. (If you ever serve heavy static assets to the public you can add caching later — separate concern.) Here's the homelab-standard stack, and most of it we already planned:
 
 ### The moving parts
-1. **ingress-nginx** (already in Phase 2.5) — the HTTP router. It reads the **Host header** and sends `app-a.home.arpa` to Service A, `app-b.home.arpa` to Service B. One entry point, many apps by name.
-2. **MetalLB** (already planned) — gives ingress-nginx **one stable LAN IP** (a `LoadBalancer` service). All your hostnames point here.
+1. **Traefik** (already in Phase 2.5) — the HTTP router. It reads the **Host header** and sends `app-a.home.arpa` to Service A, `app-b.home.arpa` to Service B. One entry point, many apps by name.
+2. **MetalLB** (already planned) — gives Traefik **one stable LAN IP** (a `LoadBalancer` service). All your hostnames point here.
 3. **A DNS server that maps names → that IP.** This is the missing piece:
    - **Use the selected private namespace:** `*.home.arpa`. It is reserved for residential networks and uses a private CA for certificates. A real subdomain you own remains an option later if you want publicly trusted certificates.
    - **Run a local resolver** on the LAN: **AdGuard Home** or **dnsmasq** (both support **wildcard** records — `*.home.arpa → <ingress IP>`), or **Pi-hole** (no native wildcard, so pair it with ExternalDNS to create per-app records). Point your router/devices at it.
@@ -284,7 +284,7 @@ Quick terminology fix: what you want — typing `myapp.home.arpa` instead of `10
 **CoreDNS** (built into kubeadm) is the cluster's *internal* DNS for **pod-to-pod** service discovery (`svc.namespace.svc.cluster.local`). It is **not** what your laptop/browser uses — that's the external DNS server above. Two different resolvers, two different jobs.
 
 ### Recommended ladder
-1. **Start:** own a domain (or pick `*.home`) → run **AdGuard Home** with a **wildcard** to the ingress IP → ingress-nginx routes by host. You can now reach apps by name on the LAN.
+1. **Start:** use `*.home.arpa` → run **AdGuard Home** with a **wildcard** to the ingress IP → Traefik routes by host. You can now reach apps by name on the LAN.
 2. **Add TLS:** **cert-manager** for HTTPS.
 3. **Automate:** **ExternalDNS** so records track your Ingress objects (GitOps).
 4. **Remote:** **Tailscale Split DNS** so the names work away from home.
@@ -302,7 +302,7 @@ Quick terminology fix: what you want — typing `myapp.home.arpa` instead of `10
 | Container runtime | **containerd** |
 | CNI | **Cilium** |
 | Storage | **local-path-provisioner** → Longhorn later |
-| Ingress / LB | **ingress-nginx** + **MetalLB** |
+| Ingress / LB | **Traefik** + **MetalLB** |
 | Hostname access (DNS) | Local resolver (**AdGuard Home**/dnsmasq wildcard, or Pi-hole) → ingress IP; **ExternalDNS** to automate; **cert-manager** for TLS; **Tailscale Split DNS** for remote. *(This is your "internal CDN" ask — it's DNS+ingress, not a CDN.)* |
 | Secrets | kubectl Secrets now → **SOPS / Sealed Secrets** with GitOps |
 | Disposable envs | **Agent Sandbox** (SandboxTemplate/WarmPool/Claim) |

@@ -23,6 +23,10 @@ check:
 	  ANSIBLE_ROLES_PATH="$(CURDIR)/$(ANSIBLE_DIR)/roles" \
 	  ANSIBLE_REMOTE_TEMP="/tmp/homelab-ansible-remote" \
 	  ansible-playbook --inventory localhost, tests/metallb_validation.yml
+	cd $(ANSIBLE_DIR) && \
+	  ANSIBLE_ROLES_PATH="$(CURDIR)/$(ANSIBLE_DIR)/roles" \
+	  ANSIBLE_REMOTE_TEMP="/tmp/homelab-ansible-remote" \
+	  ansible-playbook --inventory localhost, tests/traefik_validation.yml
 	cd $(ANSIBLE_DIR) && ansible-lint
 
 ## install the git pre-commit hooks (lint + secret scanning)
@@ -63,7 +67,7 @@ nodes:
 cluster:
 	cd $(ANSIBLE_DIR) && ansible-playbook cluster.yml
 
-## bootstrap pre-Argo cluster services (currently MetalLB)
+## bootstrap pre-Argo cluster services (MetalLB + Traefik ingress)
 platform:
 	cd $(ANSIBLE_DIR) && ansible-playbook platform.yml
 

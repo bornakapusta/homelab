@@ -1,0 +1,34 @@
+---
+- name: Read the pinned Traefik chart metadata
+  ansible.builtin.command:
+    argv:
+      - helm
+      - show
+      - chart
+      - "{{ __traefik_chart_ref }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  register: __traefik_chart_metadata_raw
+  changed_when: false
+
+- name: Verify the pinned Traefik chart and application versions
+  ansible.builtin.assert:
+    that:
+      - (__traefik_chart_metadata_raw.stdout | from_yaml).name == 'traefik'
+      - >-
+        (__traefik_chart_metadata_raw.stdout | from_yaml).version
+        == traefik_chart_version
+      - >-
+        (__traefik_chart_metadata_raw.stdout | from_yaml).appVersion
+        | regex_replace('^v', '') == traefik_version
+    fail_msg: >-
+      traefik_chart_sha256 does not resolve to Traefik chart
+      {{ traefik_chart_version }} with proxy {{ traefik_version }}. Update the
+      chart version, proxy version, and digest together; Helm ignores --version
+      when an OCI digest is supplied.
+    quiet: true
+  delegate_to: localhost
+  become: false
+  run_once: true

@@ -83,10 +83,10 @@ kubectl get nodes -o wide
 
 All nodes should reach `Ready` within a minute or two of Cilium starting.
 
-## Step 3 — Install the first platform service
+## Step 3 — Install the first platform services
 
-Until Argo CD exists, a small bootstrap playbook installs the pinned MetalLB
-controller and one speaker per node:
+Until Argo CD exists, a small bootstrap playbook installs pinned MetalLB and a
+minimal Traefik ingress controller:
 
 ```bash
 ansible-playbook platform.yml
@@ -99,6 +99,19 @@ that boundary is checked. See `roles/metallb/README.md` for the exact rollout.
 
 MetalLB uses native Layer 2 mode here: one node answers ARP for a LoadBalancer
 address and Kubernetes forwards the traffic to the selected Service pods.
+
+Traefik then requests `192.168.178.240` from that pool and listens for HTTP/HTTPS.
+Applications use ordinary Kubernetes Ingress objects with
+`ingressClassName: traefik`. The complete path is:
+
+```text
+LAN client -> 192.168.178.240 -> MetalLB -> Traefik -> Ingress rule
+           -> application Service -> application pod
+```
+
+The bootstrap runs one hardened Traefik replica with its dashboard, custom CRD
+provider, Gateway API provider, and telemetry disabled. See
+`ansible/roles/traefik/README.md` for its exact scope and rollback procedure.
 
 ---
 
@@ -130,7 +143,7 @@ before your first run — the defaults were correct as of July 2026 but move on.
 
 ## Not included yet
 
-- `clusters/` — Argo CD ownership, ingress-nginx, cert-manager, monitoring, Agent Sandbox
+- `clusters/` — Argo CD ownership, cert-manager, monitoring, Agent Sandbox
 - `images/rails-dev/` — the agent sandbox image
 - HA control plane (kube-vip)
 

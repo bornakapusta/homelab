@@ -79,7 +79,7 @@
   <rect x="678" y="304" width="198" height="34" class="box" rx="8"/>
   <text x="688" y="326" class="tag">quotas · NetworkPolicies</text>
   <rect x="678" y="346" width="198" height="34" class="box" rx="8"/>
-  <text x="688" y="368" class="tag">ingress-nginx · MetalLB</text>
+  <text x="688" y="368" class="tag">Traefik · MetalLB</text>
 
   <path d="M182,168 C182,420 250,352 298,352" class="flowa" marker-end="url(#arra)"/>
   <text x="150" y="360" class="tag" fill="var(--accent)">herdr kubectl exec</text>

@@ -4,7 +4,7 @@
 
 ## Locked-in decisions
 
-> **Stack updated** (see `linux-k8s-foundations.md`): base OS is **Ubuntu Server LTS 24.04**; Kubernetes is **kubeadm (standard/upstream)**, not k3s — start 1 control-plane + 2 workers, then expand to 3× control-plane + **kube-vip** for HA. kubeadm gives you no batteries, so we add CNI (Cilium), storage (local-path), and ingress-nginx + **MetalLB** ourselves.
+> **Stack updated** (see `linux-k8s-foundations.md`): base OS is **Ubuntu Server LTS 24.04**; Kubernetes is **kubeadm (standard/upstream)**, not k3s — start 1 control-plane + 2 workers, then expand to 3× control-plane + **kube-vip** for HA. kubeadm gives you no batteries, so we add CNI (Cilium), storage (local-path), and Traefik + **MetalLB** ourselves.
 
 - **Hardware:** 3× Dell OptiPlex 7050 (i5-7500T, 16 GB, 256 GB NVMe). Wipe Windows on all three.
 - **OS / K8s:** **Ubuntu Server LTS 24.04 + kubeadm** (upstream Kubernetes) — this is the end state. **Talos migration is parked** (optional future, not planned now).
@@ -101,7 +101,7 @@ Each phase ends in a **milestone** you can verify. Do them in order; don't skip 
 *Goal: replace what k3s used to give for free. ~1 evening.*
 
 - **Bare-metal load balancer:** install **MetalLB** so `LoadBalancer` services get a LAN IP.
-- **Ingress:** install **ingress-nginx**.
+- **Ingress:** install **Traefik** using standard Kubernetes Ingress resources.
 - **Storage:** install **local-path-provisioner** (the default StorageClass). Longhorn is a later, optional upgrade — note the 256 GB limit; watch `df -h`.
 - **Hostname access (DNS + TLS):** point a **local DNS server** (AdGuard Home/dnsmasq wildcard, or Pi-hole) at the ingress MetalLB IP so apps resolve by name; add **cert-manager** for HTTPS and optionally **ExternalDNS** to auto-create records from Ingress objects. (This is the "internal CDN" ask — it's DNS + ingress, not a CDN. Details in `linux-k8s-foundations.md` §9.)
 - **Milestone:** deploy an app, give it a PVC, reach it at `https://app.home.arpa` by name on the LAN.

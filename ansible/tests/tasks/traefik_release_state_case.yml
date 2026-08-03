@@ -1,0 +1,29 @@
+---
+- name: Seed release fixtures for {{ traefik_release_state_case.name }}
+  ansible.builtin.set_fact:
+    __traefik_releases_raw:
+      stdout: >-
+        {{ [traefik_release_state_case.release] | to_json
+           if traefik_release_state_case.release is defined else '[]' }}
+    __traefik_values_raw:
+      stdout: >-
+        {{ traefik_release_state_case.current_values | default({}) | to_json }}
+    __traefik_helm_values:
+      managed: true
+    traefik_chart_version: 41.0.2
+    traefik_version: 3.7.6
+
+- name: Compare fixture state for {{ traefik_release_state_case.name }}
+  ansible.builtin.include_tasks: ../../roles/traefik/tasks/release_state.yml
+
+- name: Reconciliation decision must match the expected result
+  ansible.builtin.assert:
+    that:
+      - >-
+        __traefik_needs_reconcile | bool
+        == traefik_release_state_case.expect_change | bool
+    fail_msg: >-
+      {{ traefik_release_state_case.name }} expected reconcile={{
+      traefik_release_state_case.expect_change }}, got {{
+      __traefik_needs_reconcile }}.
+    quiet: true

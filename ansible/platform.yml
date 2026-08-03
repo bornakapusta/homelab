@@ -6,6 +6,7 @@
 #
 # MetalLB is installed first and its address pool is reconciled only after the
 # explicit safety gate in group_vars/all.yml confirms the router's DHCP boundary.
+# Traefik then requests one fixed address from that pool for HTTP ingress.
 # ===========================================================================
 
 - name: Bootstrap cluster platform services
@@ -16,3 +17,5 @@
   roles:
     - role: metallb
       tags: [platform, metallb]
+    - role: traefik
+      tags: [platform, traefik, ingress]

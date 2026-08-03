@@ -1,0 +1,357 @@
+---
+# A minimal pre-Argo ingress controller: one replica, standard Kubernetes
+# Ingress resources, and one fixed LAN address supplied by MetalLB.
+
+- name: Validate Traefik operator inputs
+  ansible.builtin.include_tasks: validate.yml
+
+- name: Locate the fetched admin kubeconfig
+  ansible.builtin.stat:
+    path: "{{ traefik_kubeconfig }}"
+  delegate_to: localhost
+  run_once: true
+  register: __traefik_kubeconfig_stat
+
+- name: The cluster must be bootstrapped before Traefik
+  ansible.builtin.assert:
+    that:
+      - __traefik_kubeconfig_stat.stat.exists
+      - __traefik_kubeconfig_stat.stat.isreg
+    fail_msg: >-
+      {{ traefik_kubeconfig }} does not exist. Run `make cluster` first; the
+      control_plane role fetches the admin kubeconfig used by this role.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Read the controller Helm version
+  ansible.builtin.command: helm version --short
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  register: __traefik_helm_version
+  failed_when: false
+  changed_when: false
+
+- name: Normalise the controller Helm version
+  ansible.builtin.set_fact:
+    __traefik_helm_semver: >-
+      {{ __traefik_helm_version.stdout
+         | default('v0.0.0', true)
+         | regex_replace('^v', '')
+         | regex_replace('\+.*$', '') }}
+  run_once: true
+
+- name: Controller Helm must support the pinned Kubernetes release
+  ansible.builtin.assert:
+    that:
+      - __traefik_helm_version.rc == 0
+      - __traefik_helm_semver is version('4.2.0', '>=')
+      - __traefik_helm_semver is version('5.0.0', '<')
+    fail_msg: >-
+      Kubernetes 1.36 needs Helm 4.2.x according to Helm's version-skew policy,
+      and this role fails closed on unreviewed major versions. Install or
+      upgrade Helm on the Ansible controller, then rerun `make platform`.
+    quiet: true
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Confirm every cluster node is Ready before adding ingress
+  ansible.builtin.command:
+    argv: >-
+      {{ __traefik_kubectl_wait_argv + [
+           'wait', '--for=condition=Ready', 'nodes', '--all', '--timeout=30s'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  changed_when: false
+
+- name: Read the live MetalLB address pool
+  ansible.builtin.command:
+    argv: >-
+      {{ __traefik_kubectl_argv + [
+           '--namespace', 'metallb-system', 'get',
+           'ipaddresspool.metallb.io', metallb_pool_name, '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  register: __traefik_metallb_pool_raw
+  changed_when: false
+
+- name: The live MetalLB pool must match the confirmed configuration
+  ansible.builtin.assert:
+    that:
+      - >-
+        (__traefik_metallb_pool_raw.stdout | from_json).spec.addresses
+        == metallb_address_ranges
+    fail_msg: >-
+      The live MetalLB pool does not match metallb_address_ranges. Run the
+      MetalLB role successfully before assigning Traefik a LAN address.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Read the current Traefik Helm release
+  ansible.builtin.command:
+    argv:
+      - helm
+      - list
+      - --namespace
+      - "{{ __traefik_namespace }}"
+      - --filter
+      - "^{{ traefik_release_name }}$"
+      - --output
+      - json
+      - --kubeconfig
+      - "{{ traefik_kubeconfig }}"
+      - --kube-apiserver
+      - "https://{{ ansible_host }}:6443"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  register: __traefik_releases_raw
+  changed_when: false
+
+- name: Read the current Traefik user-supplied values
+  ansible.builtin.command:
+    argv:
+      - helm
+      - get
+      - values
+      - "{{ traefik_release_name }}"
+      - --namespace
+      - "{{ __traefik_namespace }}"
+      - --output
+      - json
+      - --kubeconfig
+      - "{{ traefik_kubeconfig }}"
+      - --kube-apiserver
+      - "https://{{ ansible_host }}:6443"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  when: __traefik_releases_raw.stdout | from_json | length > 0
+  register: __traefik_values_raw
+  changed_when: false
+
+- name: Compare the current and desired Traefik release state
+  ansible.builtin.include_tasks: release_state.yml
+
+- name: Predict Traefik reconciliation
+  ansible.builtin.debug:
+    msg: >-
+      Traefik chart {{ traefik_chart_version }} with proxy
+      {{ traefik_version }} would be reconciled at
+      {{ traefik_load_balancer_ip }}.
+  when:
+    - ansible_check_mode
+    - __traefik_needs_reconcile
+  changed_when: true
+  run_once: true
+
+- name: Verify the pinned chart before reconciliation
+  ansible.builtin.include_tasks: verify_chart.yml
+  when: __traefik_needs_reconcile
+
+- name: Reconcile the pinned Traefik Helm release
+  when:
+    - not ansible_check_mode
+    - __traefik_needs_reconcile
+  block:
+    - name: Create temporary storage for Traefik values
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: traefik-values-
+      delegate_to: localhost
+      become: false
+      register: __traefik_values_dir
+      changed_when: false
+
+    - name: Render the exact Traefik values
+      ansible.builtin.copy:
+        dest: "{{ __traefik_values_dir.path }}/values.yml"
+        content: |
+          {{ __traefik_managed_header }}
+          # Temporary Helm values; do not edit.
+          {{ __traefik_helm_values | to_nice_yaml(indent=2) }}
+        mode: "0600"
+        backup: true
+      delegate_to: localhost
+      become: false
+
+    - name: Install or upgrade Traefik from its pinned OCI digest
+      ansible.builtin.command:
+        argv:
+          - helm
+          - upgrade
+          - --install
+          - "{{ traefik_release_name }}"
+          - "{{ __traefik_chart_ref }}"
+          - --namespace
+          - "{{ __traefik_namespace }}"
+          - --create-namespace
+          - --skip-crds
+          - --values
+          - "{{ __traefik_values_dir.path }}/values.yml"
+          - --rollback-on-failure
+          - --wait
+          - --timeout
+          - 5m
+          - --history-max
+          - "5"
+          - --kubeconfig
+          - "{{ traefik_kubeconfig }}"
+          - --kube-apiserver
+          - "https://{{ ansible_host }}:6443"
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+  always:
+    - name: Remove the temporary Traefik values
+      ansible.builtin.file:
+        path: "{{ __traefik_values_dir.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      when:
+        - __traefik_values_dir is defined
+        - __traefik_values_dir.path is defined
+      changed_when: false
+
+- name: Wait for the Traefik controller
+  ansible.builtin.command:
+    argv: >-
+      {{ __traefik_kubectl_wait_argv + [
+           '--namespace', __traefik_namespace, 'rollout', 'status',
+           'deployment/' ~ traefik_release_name, '--timeout=300s'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: not ansible_check_mode
+  changed_when: false
+
+- name: Read the deployed Traefik workload
+  ansible.builtin.command:
+    argv: >-
+      {{ __traefik_kubectl_argv + [
+           '--namespace', __traefik_namespace, 'get', 'deployment',
+           traefik_release_name, '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: not ansible_check_mode
+  register: __traefik_deployment_raw
+  changed_when: false
+
+- name: Read the Traefik IngressClass
+  ansible.builtin.command:
+    argv: >-
+      {{ __traefik_kubectl_argv + [
+           'get', 'ingressclass', traefik_ingress_class_name,
+           '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: not ansible_check_mode
+  register: __traefik_ingress_class_raw
+  changed_when: false
+
+- name: Read the Traefik LoadBalancer Service
+  ansible.builtin.command:
+    argv: >-
+      {{ __traefik_kubectl_argv + [
+           '--namespace', __traefik_namespace, 'get', 'service',
+           traefik_release_name, '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: not ansible_check_mode
+  register: __traefik_service_raw
+  changed_when: false
+
+- name: Parse the live Traefik resources
+  ansible.builtin.set_fact:
+    __traefik_deployment: "{{ __traefik_deployment_raw.stdout | from_json }}"
+    __traefik_ingress_class: >-
+      {{ __traefik_ingress_class_raw.stdout | from_json }}
+    __traefik_service: "{{ __traefik_service_raw.stdout | from_json }}"
+  when: not ansible_check_mode
+  run_once: true
+
+- name: Confirm the live Traefik deployment and ingress class
+  ansible.builtin.assert:
+    that:
+      - >-
+        __traefik_deployment.spec.template.spec.containers[0].image
+        == __traefik_image
+      - __traefik_deployment.spec.replicas == 1
+      - >-
+        __traefik_ingress_class.spec.controller
+        == 'traefik.io/ingress-controller'
+      - >-
+        __traefik_ingress_class.metadata.annotations
+        | default({})
+        | dict2items
+        | selectattr('key', 'equalto',
+                     'ingressclass.kubernetes.io/is-default-class')
+        | map(attribute='value')
+        | first
+        | default('false')
+        | lower != 'true'
+    fail_msg: >-
+      The live Traefik workload is not using the immutable image, one-replica
+      deployment, or explicit non-default IngressClass managed by this role.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+  when: not ansible_check_mode
+
+- name: Confirm the live Traefik LAN Service
+  ansible.builtin.assert:
+    that:
+      - __traefik_service.spec.type == 'LoadBalancer'
+      - >-
+        __traefik_service.metadata.annotations['metallb.io/address-pool']
+        == metallb_pool_name
+      - >-
+        __traefik_service.metadata.annotations['metallb.io/loadBalancerIPs']
+        == traefik_load_balancer_ip
+      - >-
+        __traefik_service.spec.ports | map(attribute='port') | sort
+        == [80, 443]
+      - >-
+        traefik_load_balancer_ip in (
+          __traefik_service.status.loadBalancer.ingress
+          | default([])
+          | selectattr('ip', 'defined')
+          | map(attribute='ip')
+          | list
+        )
+    fail_msg: >-
+      The Traefik Service is not exposing exactly HTTP/HTTPS through MetalLB at
+      {{ traefik_load_balancer_ip }}. Inspect the Service and MetalLB events
+      before creating application Ingress resources.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+  when: not ansible_check_mode
+
+- name: Report the active Traefik ingress address
+  ansible.builtin.debug:
+    msg: >-
+      Traefik {{ traefik_version }} is healthy at
+      {{ traefik_load_balancer_ip }}. Application Ingress objects must set
+      ingressClassName={{ traefik_ingress_class_name }}.
+  when: not ansible_check_mode
+  run_once: true

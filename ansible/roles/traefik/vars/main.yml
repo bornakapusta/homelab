@@ -1,0 +1,114 @@
+---
+# Fixed implementation details. Keeping these in vars/ prevents an unrelated
+# inventory value from silently widening the ingress controller's scope.
+
+__traefik_namespace: traefik-system
+
+__traefik_chart_ref: >-
+  oci://ghcr.io/traefik/helm/traefik@sha256:{{ traefik_chart_sha256 }}
+
+__traefik_image: >-
+  docker.io/library/traefik@sha256:{{ traefik_image_sha256 }}
+
+__traefik_managed_header: >-
+  {{ lookup('config', 'DEFAULT_MANAGED_STR') | comment }}
+
+__traefik_kubectl_argv:
+  - kubectl
+  - --request-timeout=30s
+  - --kubeconfig
+  - "{{ traefik_kubeconfig }}"
+  - --server
+  - "https://{{ ansible_host }}:6443"
+
+__traefik_kubectl_wait_argv:
+  - kubectl
+  - --request-timeout=310s
+  - --kubeconfig
+  - "{{ traefik_kubeconfig }}"
+  - --server
+  - "https://{{ ansible_host }}:6443"
+
+# Exact user-supplied Helm values. The role compares this dictionary with
+# `helm get values`, so an unchanged run does not contact the OCI registry or
+# restart the controller.
+__traefik_helm_values:
+  api:
+    dashboard: false
+    insecure: false
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+  deployment:
+    enabled: true
+    kind: Deployment
+    replicas: 1
+  fullnameOverride: "{{ traefik_release_name }}"
+  gateway:
+    enabled: false
+  gatewayClass:
+    enabled: false
+  global:
+    checkNewVersion: false
+    sendAnonymousUsage: false
+  hostNetwork: false
+  image:
+    digest: "sha256:{{ traefik_image_sha256 }}"
+    pullPolicy: IfNotPresent
+    registry: docker.io
+    repository: library/traefik
+  ingressClass:
+    enabled: true
+    isDefaultClass: false
+    name: "{{ traefik_ingress_class_name }}"
+  ingressRoute:
+    dashboard:
+      enabled: false
+    healthcheck:
+      enabled: false
+  podSecurityContext:
+    runAsGroup: 65532
+    runAsNonRoot: true
+    runAsUser: 65532
+  ports:
+    web:
+      expose:
+        default: true
+      exposedPort: 80
+    websecure:
+      expose:
+        default: true
+      exposedPort: 443
+      http:
+        tls:
+          enabled: true
+  providers:
+    kubernetesCRD:
+      enabled: false
+    kubernetesGateway:
+      enabled: false
+    kubernetesIngress:
+      enabled: true
+      ingressClass: "{{ traefik_ingress_class_name }}"
+      publishedService:
+        enabled: true
+  rbac:
+    enabled: true
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  service:
+    annotations:
+      metallb.io/address-pool: "{{ metallb_pool_name }}"
+      metallb.io/loadBalancerIPs: "{{ traefik_load_balancer_ip }}"
+    enabled: true
+    single: true
+    type: LoadBalancer
+  versionOverride: "v{{ traefik_version }}"

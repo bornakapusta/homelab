@@ -103,7 +103,8 @@ pod_cidr: "10.244.0.0/16"
 # --- versions --------------------------------------------------------------
 # CHECK THESE BEFORE YOUR FIRST RUN. Kubernetes/containerd were verified
 # 2026-07-26; the Cilium release and chart digest were verified 2026-07-31;
-# Tailscale 1.96.2 and its resolute signing key were verified 2026-08-01.
+# Tailscale 1.96.2 and its resolute signing key were verified 2026-08-01;
+# MetalLB and Traefik release metadata were verified 2026-08-02/03.
 #   Kubernetes: https://kubernetes.io/releases/
 #   Cilium:     https://github.com/cilium/cilium/releases
 #   containerd: https://download.docker.com/linux/ubuntu/dists/resolute/stable/binary-amd64/Packages
@@ -174,6 +175,22 @@ metallb_address_pool_state: present
 metallb_address_pool_confirmed: true
 metallb_address_ranges:
   - 192.168.178.240-192.168.178.250
+
+# Traefik is the cluster's minimal HTTP ingress controller. The chart metadata
+# pins proxy v3.7.6, and both the chart and multi-architecture image indexes are
+# selected by immutable OCI digests rather than mutable version tags.
+traefik_chart_version: "41.0.2"
+# OCI manifest digest reported by:
+#   helm show chart oci://ghcr.io/traefik/helm/traefik --version 41.0.2
+traefik_chart_sha256: "b64212403e056c14dbcac5bfd0030f89f0e08fccae370dd7cd96592ee745848e"
+traefik_version: "3.7.6"
+# Multi-architecture OCI index digest reported by:
+#   docker buildx imagetools inspect traefik:v3.7.6
+traefik_image_sha256: "21a3d83696379bac6434bb32e1dde0aff0e84ef2abd053ed3db87d3f45e749b2"
+
+# This address is inside lan-pool but outside the FRITZ!Box DHCP range. MetalLB
+# makes it reachable; Traefik listens behind it and routes HTTP by Ingress rule.
+traefik_load_balancer_ip: 192.168.178.240
 
 # base_packages moved to roles/base/defaults/main.yml — it is a property of the
 # base role, not a site setting. Override it here only if you need extras.

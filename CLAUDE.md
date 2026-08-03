@@ -18,7 +18,7 @@ make test       # molecule test -s hardening (needs Docker; touches no node)
 make ping       # verify SSH to all nodes
 make nodes      # ansible-playbook site.yml (configure nodes, idempotent)
 make cluster    # ansible-playbook cluster.yml (kubeadm init + CNI + join workers)
-make platform   # ansible-playbook platform.yml (pre-Argo MetalLB bootstrap)
+make platform   # ansible-playbook platform.yml (MetalLB + Traefik bootstrap)
 make all        # nodes + cluster in one go
 make hosts      # print the /etc/hosts line THIS LAPTOP needs
 make status     # kubectl get nodes + pods using fetched kubeconfig
@@ -64,7 +64,7 @@ make cluster
 ### Three-playbook design
 - **`site.yml`** — idempotent node configuration. Re-run freely. Applies roles: `base` → `hardening` → `kubernetes_node`. Gets all nodes to an identical kubeadm-ready state.
 - **`cluster.yml`** — one-time cluster bootstrap. Runs `control_plane` role on the CP node, then `worker` role on workers. Safe to re-run (skips init/join if already done via stat checks on `/etc/kubernetes/admin.conf` and `/etc/kubernetes/kubelet.conf`).
-- **`platform.yml`** — minimal pre-Argo bootstrap for cluster services. It currently installs checksum-pinned native-mode MetalLB; its `192.168.178.240-250` pool sits above the router's confirmed `.20-.200` DHCP range.
+- **`platform.yml`** — minimal pre-Argo bootstrap for cluster services. It installs checksum-pinned native-mode MetalLB, then digest-pinned Traefik at `192.168.178.240`; the MetalLB `.240-.250` pool sits above the router's confirmed `.20-.200` DHCP range.
 
 ### Ansible roles (`ansible/roles/`)
 Order in `site.yml` matters — see the note under `automation_user`.
@@ -79,6 +79,7 @@ Order in `site.yml` matters — see the note under `automation_user`.
 | `control_plane` | kubeadm init, digest-pinned Cilium CNI, kubeconfig fetch, generate join command |
 | `worker` | join cluster using token from control_plane, wait for registration, label node |
 | `metallb` | checksum-pinned native manifest, digest-pinned images, Layer 2 address-pool safety gate |
+| `traefik` | digest-pinned Helm release, standard Ingress only, fixed MetalLB address |
 
 `automation_user` **must** run before `hardening`: the account has to exist and be
 listed in sshd's `AllowUsers` before `hardening` reloads sshd.

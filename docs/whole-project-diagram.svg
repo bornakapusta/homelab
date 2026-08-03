@@ -63,7 +63,7 @@
   <text x="204" y="292" class="band">PLATFORM SERVICES (in-cluster, Argo-managed)</text>
   <g class="lbl" font-size="11">
     <rect x="204" y="300" width="118" height="30" rx="7" class="box"/><text x="263" y="320" text-anchor="middle" font-size="11">Agent Sandbox</text>
-    <rect x="330" y="300" width="104" height="30" rx="7" class="box"/><text x="382" y="320" text-anchor="middle" font-size="11">ingress-nginx</text>
+    <rect x="330" y="300" width="104" height="30" rx="7" class="box"/><text x="382" y="320" text-anchor="middle" font-size="11">Traefik</text>
     <rect x="442" y="300" width="92" height="30" rx="7" class="box"/><text x="488" y="320" text-anchor="middle" font-size="11">MetalLB</text>
     <rect x="542" y="300" width="104" height="30" rx="7" class="box"/><text x="594" y="320" text-anchor="middle" font-size="11">cert-manager</text>
     <rect x="654" y="300" width="104" height="30" rx="7" class="box"/><text x="706" y="320" text-anchor="middle" font-size="11">ExternalDNS</text>

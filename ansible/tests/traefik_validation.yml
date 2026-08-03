@@ -1,0 +1,178 @@
+---
+- name: Exercise Traefik validation and release-state decisions
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    traefik_validation_digest: >-
+      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    traefik_validation_cases:
+      - name: fixed address in first-last range
+        address: 192.0.2.240
+        ranges: [192.0.2.240-192.0.2.250]
+        expect_rejected: false
+      - name: fixed address in CIDR
+        address: 192.0.2.246
+        ranges: [192.0.2.240/29]
+        expect_rejected: false
+      - name: address outside pool
+        address: 192.0.2.239
+        ranges: [192.0.2.240-192.0.2.250]
+        expect_rejected: true
+      - name: malformed address
+        address: 999.0.2.240
+        ranges: [192.0.2.240-192.0.2.250]
+        expect_rejected: true
+      - name: IPv6 address
+        address: '2001:db8::1'
+        ranges: [192.0.2.240-192.0.2.250]
+        expect_rejected: true
+      - name: malformed pool range
+        address: 192.0.2.240
+        ranges: [192.0.2.250-192.0.2.240]
+        expect_rejected: true
+      - name: disabled MetalLB pool
+        address: 192.0.2.240
+        ranges: [192.0.2.240-192.0.2.250]
+        pool_state: absent
+        expect_rejected: true
+      - name: unconfirmed MetalLB pool
+        address: 192.0.2.240
+        ranges: [192.0.2.240-192.0.2.250]
+        confirmed: false
+        expect_rejected: true
+      - name: empty MetalLB pool
+        address: 192.0.2.240
+        ranges: []
+        expect_rejected: true
+      - name: malformed chart version
+        address: 192.0.2.240
+        ranges: [192.0.2.240-192.0.2.250]
+        chart_version: latest
+        expect_rejected: true
+      - name: malformed proxy version
+        address: 192.0.2.240
+        ranges: [192.0.2.240-192.0.2.250]
+        proxy_version: latest
+        expect_rejected: true
+      - name: malformed chart digest
+        address: 192.0.2.240
+        ranges: [192.0.2.240-192.0.2.250]
+        chart_digest: not-a-digest
+        expect_rejected: true
+      - name: malformed image digest
+        address: 192.0.2.240
+        ranges: [192.0.2.240-192.0.2.250]
+        image_digest: not-a-digest
+        expect_rejected: true
+      - name: invalid Helm release name
+        address: 192.0.2.240
+        ranges: [192.0.2.240-192.0.2.250]
+        release_name: Bad_Name
+        expect_rejected: true
+      - name: overlong Helm release name
+        address: 192.0.2.240
+        ranges: [192.0.2.240-192.0.2.250]
+        release_name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        expect_rejected: true
+      - name: invalid IngressClass name
+        address: 192.0.2.240
+        ranges: [192.0.2.240-192.0.2.250]
+        ingress_class: Traefik
+        expect_rejected: true
+      - name: invalid MetalLB pool name
+        address: 192.0.2.240
+        ranges: [192.0.2.240-192.0.2.250]
+        pool_name: LAN_POOL
+        expect_rejected: true
+    traefik_release_state_cases:
+      - name: exact current release
+        release:
+          app_version: v3.7.6
+          chart: traefik-41.0.2
+          status: deployed
+        current_values:
+          managed: true
+        expect_change: false
+      - name: release missing
+        expect_change: true
+      - name: release status failed
+        release:
+          app_version: v3.7.6
+          chart: traefik-41.0.2
+          status: failed
+        current_values:
+          managed: true
+        expect_change: true
+      - name: chart version drifted
+        release:
+          app_version: v3.7.6
+          chart: traefik-40.0.0
+          status: deployed
+        current_values:
+          managed: true
+        expect_change: true
+      - name: proxy version drifted
+        release:
+          app_version: v3.7.5
+          chart: traefik-41.0.2
+          status: deployed
+        current_values:
+          managed: true
+        expect_change: true
+      - name: user values drifted
+        release:
+          app_version: v3.7.6
+          chart: traefik-41.0.2
+          status: deployed
+        current_values:
+          managed: false
+        expect_change: true
+  tasks:
+    - name: Run each Traefik validation case
+      ansible.builtin.include_tasks: tasks/traefik_validation_case.yml
+      loop: "{{ traefik_validation_cases }}"
+      loop_control:
+        loop_var: traefik_validation_case
+        label: "{{ traefik_validation_case.name }}"
+
+    - name: Seed valid MetalLB inputs for the managed-values assertion
+      ansible.builtin.set_fact:
+        metallb_address_pool_state: present
+        metallb_address_pool_confirmed: true
+        metallb_address_ranges: [192.0.2.240-192.0.2.250]
+        metallb_pool_name: lan-pool
+
+    - name: Load the managed Traefik values with valid operator inputs
+      ansible.builtin.include_role:
+        name: traefik
+        tasks_from: validate
+        public: true
+      vars:
+        traefik_chart_version: 41.0.2
+        traefik_chart_sha256: "{{ traefik_validation_digest }}"
+        traefik_version: 3.7.6
+        traefik_image_sha256: "{{ traefik_validation_digest }}"
+        traefik_load_balancer_ip: 192.0.2.240
+        traefik_release_name: traefik
+        traefik_ingress_class_name: traefik
+
+    - name: Managed values must use the Traefik 41 security and TLS paths
+      ansible.builtin.assert:
+        that:
+          - __traefik_helm_values.securityContext.allowPrivilegeEscalation == false
+          - __traefik_helm_values.containerSecurityContext is not defined
+          - __traefik_helm_values.ports.websecure.http.tls.enabled == true
+          - __traefik_helm_values.ports.websecure.tls is not defined
+        fail_msg: >-
+          The managed values do not match the Traefik 41 schema paths for the
+          container security context and websecure TLS configuration.
+        quiet: true
+
+    - name: Run each Traefik release-state case
+      ansible.builtin.include_tasks: tasks/traefik_release_state_case.yml
+      loop: "{{ traefik_release_state_cases }}"
+      loop_control:
+        loop_var: traefik_release_state_case
+        label: "{{ traefik_release_state_case.name }}"

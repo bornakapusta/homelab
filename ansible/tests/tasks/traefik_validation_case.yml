@@ -1,0 +1,53 @@
+---
+- name: Reset the validation outcome for {{ traefik_validation_case.name }}
+  ansible.builtin.set_fact:
+    traefik_validation_rejected: false
+
+- name: Seed MetalLB prerequisites for {{ traefik_validation_case.name }}
+  ansible.builtin.set_fact:
+    metallb_address_pool_state: >-
+      {{ traefik_validation_case.pool_state | default('present') }}
+    metallb_address_pool_confirmed: >-
+      {{ traefik_validation_case.confirmed | default(true) }}
+    metallb_address_ranges: "{{ traefik_validation_case.ranges }}"
+    metallb_pool_name: >-
+      {{ traefik_validation_case.pool_name | default('lan-pool') }}
+
+- name: Exercise validation for {{ traefik_validation_case.name }}
+  block:
+    - name: Run only the Traefik validation tasks
+      ansible.builtin.include_role:
+        name: traefik
+        tasks_from: validate
+      vars:
+        traefik_chart_version: >-
+          {{ traefik_validation_case.chart_version | default('41.0.2') }}
+        traefik_chart_sha256: >-
+          {{ traefik_validation_case.chart_digest
+             | default(traefik_validation_digest) }}
+        traefik_version: >-
+          {{ traefik_validation_case.proxy_version | default('3.7.6') }}
+        traefik_image_sha256: >-
+          {{ traefik_validation_case.image_digest
+             | default(traefik_validation_digest) }}
+        traefik_load_balancer_ip: "{{ traefik_validation_case.address }}"
+        traefik_release_name: >-
+          {{ traefik_validation_case.release_name | default('traefik') }}
+        traefik_ingress_class_name: >-
+          {{ traefik_validation_case.ingress_class | default('traefik') }}
+  rescue:
+    - name: Record that the Traefik safety gate rejected this case
+      ansible.builtin.set_fact:
+        traefik_validation_rejected: true
+
+- name: Validation outcome must match the expected result
+  ansible.builtin.assert:
+    that:
+      - >-
+        traefik_validation_rejected | bool
+        == traefik_validation_case.expect_rejected | bool
+    fail_msg: >-
+      {{ traefik_validation_case.name }} was expected to be
+      {{ 'rejected' if traefik_validation_case.expect_rejected else 'accepted' }},
+      but the Traefik safety gate produced the opposite result.
+    quiet: true

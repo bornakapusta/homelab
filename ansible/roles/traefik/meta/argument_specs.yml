@@ -1,0 +1,59 @@
+---
+argument_specs:
+  main:
+    short_description: Install a pinned Traefik ingress controller
+    description:
+      - Installs Traefik from a digest-pinned official OCI Helm chart.
+      - Uses only the standard Kubernetes Ingress provider.
+      - Requests one explicitly reserved LAN address from MetalLB.
+    options:
+      traefik_chart_version:
+        description: Exact official Traefik Helm chart version.
+        type: str
+        required: true
+      traefik_chart_sha256:
+        description: OCI manifest sha256 for the official Helm chart.
+        type: str
+        required: true
+      traefik_version:
+        description: Exact Traefik proxy application version.
+        type: str
+        required: true
+      traefik_image_sha256:
+        description: Multi-architecture OCI index sha256 for the proxy image.
+        type: str
+        required: true
+      traefik_load_balancer_ip:
+        description: Fixed LAN address assigned to the Traefik Service.
+        type: str
+        required: true
+      traefik_release_name:
+        description: Helm release and workload name.
+        type: str
+        required: false
+      traefik_ingress_class_name:
+        description: Explicit non-default IngressClass handled by Traefik.
+        type: str
+        required: false
+      traefik_kubeconfig:
+        description: Admin kubeconfig fetched by the control_plane role.
+        type: str
+        required: false
+      metallb_address_pool_state:
+        description: The MetalLB address pool must be enabled before ingress.
+        type: str
+        choices: [absent, present]
+        required: true
+      metallb_address_pool_confirmed:
+        description: Explicit acknowledgement that the LAN pool is safe.
+        type: bool
+        required: true
+      metallb_address_ranges:
+        description: Ranges from which the fixed ingress address is selected.
+        type: list
+        elements: str
+        required: true
+      metallb_pool_name:
+        description: MetalLB IPAddressPool requested by the Traefik Service.
+        type: str
+        required: true

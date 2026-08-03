@@ -1,0 +1,7 @@
+---
+# Safe structural defaults. Release pins and the LAN address are operator-owned
+# settings in group_vars/all.yml.
+
+traefik_release_name: traefik
+traefik_ingress_class_name: traefik
+traefik_kubeconfig: "{{ playbook_dir }}/kubeconfig"

@@ -1,0 +1,30 @@
+---
+# Pure comparison logic kept separate for controller-only regression tests.
+
+- name: Select the current Traefik Helm release
+  ansible.builtin.set_fact:
+    __traefik_release: >-
+      {{ (__traefik_releases_raw.stdout | from_json | first)
+         if (__traefik_releases_raw.stdout | from_json | length > 0)
+         else {} }}
+  run_once: true
+
+- name: Select the current Traefik user-supplied values
+  ansible.builtin.set_fact:
+    __traefik_current_values: >-
+      {{ (__traefik_values_raw.stdout | from_json)
+         if (__traefik_release | length > 0
+             and __traefik_values_raw.stdout | default('') | length > 0)
+         else {} }}
+  run_once: true
+
+- name: Decide whether Traefik needs reconciliation
+  ansible.builtin.set_fact:
+    __traefik_needs_reconcile: >-
+      {{ __traefik_release.status | default('') != 'deployed'
+         or __traefik_release.chart | default('')
+            != 'traefik-' ~ traefik_chart_version
+         or __traefik_release.app_version | default('')
+            != 'v' ~ traefik_version
+         or __traefik_current_values != __traefik_helm_values }}
+  run_once: true

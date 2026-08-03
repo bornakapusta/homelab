@@ -1,6 +1,6 @@
 # Homelab Agent-Cluster — Project Plan & Guidelines
 
-*Owner: Borna · Last updated: July 31, 2026*
+*Owner: Borna · Last updated: August 3, 2026*
 
 This is the master plan for building a 3-node Kubernetes homelab that hosts your own apps (GitOps) **and** runs AI coding agents in pre-warmed, disposable environments, all viewable through herdr.
 
@@ -42,7 +42,7 @@ It consolidates the decisions and rationale from three companion docs:
 | Runtime | containerd | Standard |
 | CNI | Cilium | Kubernetes 1.36 support, NetworkPolicy, optional Hubble later |
 | Storage | local-path (→ Longhorn later) | Simple start; watch SSD space |
-| Ingress / LB | ingress-nginx + **MetalLB** | Bare-metal LoadBalancer + ingress |
+| Ingress / LB | **Traefik** + **MetalLB** | Maintained HTTP ingress + bare-metal LoadBalancer |
 | Hostname access | Local DNS (**AdGuard Home**/dnsmasq wildcard) → ingress IP; **ExternalDNS** + **cert-manager**; **Tailscale Split DNS** remote | Reach apps by name over HTTPS (the "internal CDN" ask — really DNS+ingress) |
 | IaC | cloud-init/autoinstall → **Ansible** → **Argo CD** | Identical installs, fleet config, GitOps |
 | Secrets | kubectl Secrets → **SOPS/Sealed Secrets** | Safe to keep in git |
@@ -111,7 +111,10 @@ In one paragraph: your laptop runs **herdr** and reaches the cluster over **Tail
 - **Done:** all nodes `Ready`; a test pod runs.
 
 ### Phase 2.5 — The batteries kubeadm omits
-- [ ] Install **MetalLB** (LAN IP pool), **ingress-nginx**, **local-path-provisioner** (default StorageClass).
+- [x] Install **MetalLB** with a confirmed LAN IP pool.
+- [ ] Install **Traefik** ingress, then **local-path-provisioner** (default StorageClass).
+- Traefik replaces the retired ingress-nginx project; this bootstrap uses only
+  standard Kubernetes Ingress resources, not Traefik CRDs.
 - **Done:** an app with a PVC is reachable via MetalLB + Ingress on the LAN.
 
 ### Phase 2.75 — Hostname access (internal DNS + TLS)
@@ -174,7 +177,7 @@ homelab/
 ├─ clusters/
 │  └─ home/
 │     ├─ bootstrap/    # Argo CD install
-│     ├─ platform/     # MetalLB, ingress-nginx, monitoring, agent-sandbox
+│     ├─ platform/     # MetalLB, Traefik, monitoring, agent-sandbox
 │     └─ apps/         # your hosted apps
 ├─ images/
 │  └─ rails-dev/       # Dockerfile for the sandbox
