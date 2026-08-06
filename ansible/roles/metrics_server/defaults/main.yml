@@ -1,0 +1,8 @@
+---
+# Safe structural defaults. Release pins and the temporary TLS acknowledgement
+# are operator-owned and live in group_vars/all.yml.
+
+metrics_server_kubeconfig: "{{ playbook_dir }}/kubeconfig"
+metrics_server_secure_port: 4443
+metrics_server_cluster_hosts: "{{ cluster_hosts }}"
+metrics_server_worker_hosts: "{{ worker_hosts }}"

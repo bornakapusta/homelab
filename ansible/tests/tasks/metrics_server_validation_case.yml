@@ -1,0 +1,47 @@
+---
+- name: Reset input-validation outcome for {{ metrics_server_validation_case.name }}
+  ansible.builtin.set_fact:
+    __metrics_server_validation_rejected: false
+
+- name: Exercise input validation for {{ metrics_server_validation_case.name }}
+  block:
+    - name: Run only the Metrics Server validation tasks
+      ansible.builtin.include_role:
+        name: metrics_server
+        tasks_from: validate
+      vars:
+        metrics_server_version: >-
+          {{ metrics_server_validation_case.version | default('0.9.0') }}
+        metrics_server_manifest_sha256: >-
+          {{ metrics_server_validation_case.manifest_digest
+             | default(metrics_server_validation_digest) }}
+        metrics_server_image_sha256: >-
+          {{ metrics_server_validation_case.image_digest
+             | default(metrics_server_validation_digest) }}
+        metrics_server_kubelet_insecure_tls_acknowledged: >-
+          {{ metrics_server_validation_case.tls_acknowledged | default(true) }}
+        metrics_server_secure_port: >-
+          {{ metrics_server_validation_case.secure_port | default(4443) }}
+        metrics_server_kubeconfig: /tmp/metrics-server-validation-kubeconfig
+        metrics_server_cluster_hosts: >-
+          {{ metrics_server_validation_case.cluster_nodes
+             | default(metrics_server_valid_cluster_hosts) }}
+        metrics_server_worker_hosts: >-
+          {{ metrics_server_validation_case.worker_nodes
+             | default(metrics_server_valid_worker_hosts) }}
+  rescue:
+    - name: Record that Metrics Server validation rejected this case
+      ansible.builtin.set_fact:
+        __metrics_server_validation_rejected: true
+
+- name: Input-validation outcome must match the expected result
+  ansible.builtin.assert:
+    that:
+      - >-
+        __metrics_server_validation_rejected | bool
+        == metrics_server_validation_case.expect_rejected | bool
+    fail_msg: >-
+      {{ metrics_server_validation_case.name }} was expected to be
+      {{ 'rejected' if metrics_server_validation_case.expect_rejected else 'accepted' }},
+      but the Metrics Server input gate produced the opposite result.
+    quiet: true

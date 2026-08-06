@@ -7,6 +7,8 @@
 # MetalLB is installed first and its address pool is reconciled only after the
 # explicit safety gate in group_vars/all.yml confirms the router's DHCP boundary.
 # Traefik then requests one fixed address from that pool for HTTP ingress.
+# Metrics Server finally adds current CPU/memory through the aggregated API;
+# it does not depend on the LAN address pool or ingress.
 # ===========================================================================
 
 - name: Bootstrap cluster platform services
@@ -19,3 +21,5 @@
       tags: [platform, metallb]
     - role: traefik
       tags: [platform, traefik, ingress]
+    - role: metrics_server
+      tags: [platform, metrics, observability]

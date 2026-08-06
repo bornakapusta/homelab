@@ -1,0 +1,25 @@
+{
+  "reviewer": "correctness",
+  "findings": [
+    {
+      "title": "Live security contract was not verified",
+      "severity": "P2",
+      "file": "ansible/roles/metrics_server/tasks/main.yml",
+      "line": 340,
+      "why_it_matters": "A post-apply mutation or incomplete reconciliation could leave the live Deployment without the security and resource settings that the role claims to prove.",
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "suggested_fix": "Assert the live resources, securityContext, and APIService service target alongside the existing network and image checks.",
+      "confidence": 0.93,
+      "evidence": [
+        "Initial review snapshot: the live assertion checked image, args, placement, ports, and TLS mode but omitted resources and container securityContext fields already present in the desired contract."
+      ],
+      "pre_existing": false
+    }
+  ],
+  "residual_risks": [
+    "The live freshness gate validates a current complete API response and sample metadata, but does not independently compare sample timestamps with controller wall-clock time."
+  ],
+  "testing_gaps": []
+}

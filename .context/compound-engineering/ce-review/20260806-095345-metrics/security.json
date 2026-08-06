@@ -1,0 +1,8 @@
+{
+  "reviewer": "security",
+  "findings": [],
+  "residual_risks": [
+    "The explicitly approved kubelet and APIService TLS verification exceptions remain unsuitable for untrusted workloads and must be removed at the documented graduation boundary."
+  ],
+  "testing_gaps": []
+}

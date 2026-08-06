@@ -1,0 +1,8 @@
+{
+  "reviewer": "adversarial",
+  "findings": [],
+  "residual_risks": [
+    "A compromised trusted node or LAN-path attacker can exploit the acknowledged temporary TLS verification exceptions to spoof metrics or intercept the projected token."
+  ],
+  "testing_gaps": []
+}

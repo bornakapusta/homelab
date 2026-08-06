@@ -203,6 +203,24 @@ Everything is code; a node or the whole cluster is rebuildable from this repo �
 
 ## 7. Monitoring & observability (Grafana)
 
+### First rung: current resource metrics
+
+The repository now provides a pinned, one-replica **Metrics Server** role before
+the storage and GitOps layers exist. `make metrics` reconciles it and prints
+`kubectl top nodes`, with CPU and memory for exactly the inventory node set.
+Metrics Server keeps short-lived samples in memory; it does **not** provide
+history, disk/filesystem/network metrics, dashboards, alerts, or logs.
+
+For this private first rung it uses a worker's host network and two explicit TLS
+verification exceptions: Metrics Server does not verify kubeadm's self-signed
+kubelet serving certificates, and the APIService does not verify Metrics
+Server's ephemeral serving certificate. Replace both with signed kubelet
+certificates plus a stable APIService CA bundle before untrusted sandbox code
+runs. When Argo CD adopts the component, remove the Ansible role in the same
+change so ownership is atomic.
+
+### Full monitoring target
+
 **Recommendation: `kube-prometheus-stack`, deployed via Argo CD, tuned for small nodes.** This is the standard "Grafana setup" for Kubernetes — a single Helm chart bundling everything:
 
 - **Prometheus** — metrics database (scrapes the cluster).
@@ -225,7 +243,10 @@ Prometheus is not tiny, so cap it deliberately:
 - **VictoriaMetrics** (`victoria-metrics-k8s-stack`) — a drop-in Prometheus replacement with markedly lower CPU/RAM and better compression; the closest "lighter kube-prometheus-stack." Good graduate-to if Prometheus feels heavy on the SSDs.
 - **Grafana Cloud free tier** — run only lightweight agents (Grafana Alloy) on-cluster and ship metrics/logs *off* your nodes. Near-zero local storage/compute cost; tradeoff is data leaves your LAN and free-tier limits apply.
 
-**Plan:** start with kube-prometheus-stack (learn the standard, keep data local), retention/size capped, via Argo CD → add Loki for logs → switch to VictoriaMetrics or Grafana Cloud only if resource pressure shows up in the very dashboards you just built.
+**Plan:** use Metrics Server as the current no-storage first rung → add
+kube-prometheus-stack (learn the standard, keep data local), retention/size
+capped, via Argo CD → add Loki for logs → switch to VictoriaMetrics or Grafana
+Cloud only if resource pressure shows up in the dashboards.
 
 ## 8. Distributing pods to where hardware usage is lower (scheduling)
 
@@ -233,7 +254,8 @@ Kubernetes does this for you, but there's a **critical catch to understand up fr
 
 ### Layer 1 — the foundation (do this first, it's 80% of the win)
 - **Set accurate `requests` and `limits` on every pod.** Without requests the scheduler is flying blind and will pile things up. `requests` = what the scheduler reserves and spreads on; `limits` = the hard ceiling.
-- **Install `metrics-server`** (also needed for `kubectl top`, HPA, and the load-aware tools below).
+- **Use the installed `metrics-server` first rung** for `kubectl top`, HPA, and
+  the load-aware tools below.
 - With good requests, the **default kube-scheduler already spreads** pods toward the node with the most free (requested) capacity — its default scoring favors *least-allocated* nodes.
 
 ### Layer 2 — spread things evenly on purpose
@@ -255,7 +277,9 @@ Scheduling only decides placement *at creation*. To fix drift over time:
 - **HPA** scales the *number* of replicas up/down based on load. **VPA** right-sizes a pod's requests over time. (Cluster Autoscaler doesn't apply — your node count is fixed at 3.)
 
 ### Recommended ladder for your homelab
-1. **Now:** accurate requests/limits + `metrics-server` + topology spread constraints → the default scheduler already distributes well and you learn the core mechanics.
+1. **Now:** use the pinned `metrics-server` first rung, accurate requests/limits,
+   and topology spread constraints → the default scheduler already distributes
+   well and you learn the core mechanics.
 2. **Next:** add the **Descheduler** for periodic rebalancing.
 3. **Advanced/optional:** add **Trimaran** (fed by your Prometheus) for true real-load-aware placement — do this *after* monitoring is up and you've actually observed imbalance, not before.
 
@@ -308,7 +332,7 @@ Quick terminology fix: what you want — typing `myapp.home.arpa` instead of `10
 | Disposable envs | **Agent Sandbox** (SandboxTemplate/WarmPool/Claim) |
 | Agents | Claude Code + Codex (PI later), baked into the Rails image |
 | Pod distribution | requests/limits + **metrics-server** + topology spread (default scheduler) → **Descheduler** → **Trimaran** load-aware (real usage) later |
-| Monitoring | **kube-prometheus-stack** (Prometheus + Grafana + Alertmanager), retention/size capped; Loki for logs later; VictoriaMetrics/Grafana Cloud as fallbacks |
+| Monitoring | Pinned **Metrics Server** first rung for current CPU/RAM; then **kube-prometheus-stack** (Prometheus + Grafana + Alertmanager) with capped retention; Loki later; VictoriaMetrics/Grafana Cloud as fallbacks |
 | Remote access | **Tailscale** mesh (no Hetzner bridge needed) |
 | End state | **Ubuntu + kubeadm** — **decided: no Talos migration** |
 

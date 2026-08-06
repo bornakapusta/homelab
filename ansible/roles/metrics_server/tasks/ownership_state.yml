@@ -1,0 +1,42 @@
+---
+# Keep the ownership decision separate from cluster I/O so controller-only
+# tests can prove absent/owned/collision behavior.
+
+- name: Reset the unowned Metrics Server resource list
+  ansible.builtin.set_fact:
+    __metrics_server_unowned_resources: []
+  run_once: true
+
+- name: Find existing resources not owned by this role
+  ansible.builtin.set_fact:
+    __metrics_server_unowned_resources: >-
+      {{ __metrics_server_unowned_resources + [
+           (item.item.namespace ~ '/'
+            if item.item.namespace | length > 0 else '')
+           ~ item.item.resource ~ '/' ~ item.item.name
+         ] }}
+  vars:
+    __metrics_server_existing_object: "{{ item.stdout | from_json }}"
+  loop: "{{ __metrics_server_existing_resources_raw.results }}"
+  loop_control:
+    label: "{{ item.item.resource }}/{{ item.item.name }}"
+  when:
+    - item.stdout | length > 0
+    - >-
+      (__metrics_server_existing_object.metadata.annotations | default({})).get(
+        __metrics_server_owner_annotation, ''
+      ) != __metrics_server_owner_value
+  run_once: true
+
+- name: Refuse to adopt an independently installed Metrics Server
+  ansible.builtin.assert:
+    that:
+      - __metrics_server_unowned_resources | length == 0
+    fail_msg: >-
+      Refusing to adopt existing Metrics Server resources without an explicit
+      ownership migration: {{ __metrics_server_unowned_resources | join(', ') }}.
+      Remove the independent installation, or review and implement a deliberate
+      adoption that marks the complete nine-object set before rerunning.
+    quiet: true
+  delegate_to: localhost
+  run_once: true

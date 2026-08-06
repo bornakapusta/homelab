@@ -1,0 +1,7 @@
+{
+  "run_id": "20260806-095345-metrics",
+  "branch": "feat/node-resource-metrics",
+  "head_sha": "22d3c013c8177d1cdc8be6ec8952842fdab8f860",
+  "verdict": "Ready with fixes",
+  "completed_at": "2026-08-06T09:53:45Z"
+}

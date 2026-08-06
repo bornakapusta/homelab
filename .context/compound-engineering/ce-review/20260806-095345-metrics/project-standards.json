@@ -1,0 +1,23 @@
+{
+  "reviewer": "project-standards",
+  "findings": [
+    {
+      "title": "Repository guidance omitted new platform role",
+      "severity": "P2",
+      "file": "CLAUDE.md",
+      "line": 7,
+      "why_it_matters": "Future operators and agents would follow an obsolete Ansible-versus-Argo ownership boundary and miss both the Metrics Server command and its role conventions.",
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "suggested_fix": "Update the platform boundary, command list, playbook description, role table, and pinning convention in CLAUDE.md.",
+      "confidence": 0.98,
+      "evidence": [
+        "Initial review snapshot: CLAUDE.md said Argo CD owns everything inside the cluster and listed platform.yml as MetalLB plus Traefik only."
+      ],
+      "pre_existing": false
+    }
+  ],
+  "residual_risks": [],
+  "testing_gaps": []
+}

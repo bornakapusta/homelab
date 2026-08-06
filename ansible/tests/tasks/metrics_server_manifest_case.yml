@@ -1,0 +1,117 @@
+---
+- name: Select transform-sensitive fixture objects for {{ metrics_server_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __metrics_server_case_deployment: >-
+      {{ metrics_server_source_fixture
+         | selectattr('kind', 'equalto', 'Deployment') | first }}
+    __metrics_server_case_service: >-
+      {{ metrics_server_source_fixture
+         | selectattr('kind', 'equalto', 'Service') | first }}
+    __metrics_server_case_api_service: >-
+      {{ metrics_server_source_fixture
+         | selectattr('kind', 'equalto', 'APIService') | first }}
+
+- name: Build mutated fixture container for {{ metrics_server_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __metrics_server_case_container: >-
+      {{ (__metrics_server_case_deployment.spec.template.spec.containers | first)
+         | combine({
+             'image': 'registry.k8s.io/metrics-server/metrics-server:latest'
+           } if metrics_server_manifest_shape_case.mutation == 'deployment_image'
+           else {}) }}
+
+- name: Build mutated fixture Deployment for {{ metrics_server_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __metrics_server_case_deployment_mutated: >-
+      {{ __metrics_server_case_deployment | combine({
+           'spec': __metrics_server_case_deployment.spec | combine({
+             'template': __metrics_server_case_deployment.spec.template | combine({
+               'spec': __metrics_server_case_deployment.spec.template.spec
+                 | combine({'containers': [__metrics_server_case_container]})
+             })
+           })
+         }) }}
+
+- name: Build mutated fixture Service for {{ metrics_server_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __metrics_server_case_service_mutated: >-
+      {{ __metrics_server_case_service | combine({
+           'spec': __metrics_server_case_service.spec | combine({
+             'ports': [
+               (__metrics_server_case_service.spec.ports | first) | combine({
+                 'targetPort': 9999
+               })
+             ]
+           })
+         })
+         if metrics_server_manifest_shape_case.mutation == 'service_target'
+         else __metrics_server_case_service }}
+
+- name: Build mutated fixture APIService for {{ metrics_server_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __metrics_server_case_api_service_mutated: >-
+      {{ __metrics_server_case_api_service | combine({
+           'spec': __metrics_server_case_api_service.spec | combine({
+             'insecureSkipTLSVerify': false
+           })
+         })
+         if metrics_server_manifest_shape_case.mutation == 'api_tls'
+         else __metrics_server_case_api_service }}
+
+- name: Reset mutated object list for {{ metrics_server_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __metrics_server_case_objects: []
+
+- name: Assemble mutated object list for {{ metrics_server_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __metrics_server_case_objects: >-
+      {{ __metrics_server_case_objects
+         + ([]
+            if metrics_server_manifest_shape_case.mutation == 'missing_service'
+               and item.kind == 'Service'
+            else [
+              __metrics_server_case_deployment_mutated
+              if item.kind == 'Deployment'
+              else __metrics_server_case_service_mutated
+              if item.kind == 'Service'
+              else __metrics_server_case_api_service_mutated
+              if item.kind == 'APIService'
+              else item
+            ]) }}
+  loop: "{{ metrics_server_source_fixture }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+
+- name: Reset manifest-shape outcome for {{ metrics_server_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __metrics_server_manifest_shape_rejected: false
+
+- name: Exercise manifest preparation for {{ metrics_server_manifest_shape_case.name }}
+  block:
+    - name: Run only the Metrics Server manifest-preparation tasks
+      ansible.builtin.include_role:
+        name: metrics_server
+        tasks_from: prepare_manifest
+      vars:
+        metrics_server_version: 0.9.0
+        metrics_server_manifest_sha256: "{{ metrics_server_validation_digest }}"
+        metrics_server_image_sha256: "{{ metrics_server_validation_digest }}"
+        metrics_server_kubelet_insecure_tls_acknowledged: true
+        metrics_server_secure_port: 4443
+        metrics_server_kubeconfig: /tmp/metrics-server-validation-kubeconfig
+        metrics_server_cluster_hosts: "{{ metrics_server_valid_cluster_hosts }}"
+        metrics_server_worker_hosts: "{{ metrics_server_valid_worker_hosts }}"
+        __metrics_server_source_objects: "{{ __metrics_server_case_objects }}"
+  rescue:
+    - name: Record that manifest preparation rejected this case
+      ansible.builtin.set_fact:
+        __metrics_server_manifest_shape_rejected: true
+
+- name: Manifest preparation must fail closed for {{ metrics_server_manifest_shape_case.name }}
+  ansible.builtin.assert:
+    that:
+      - __metrics_server_manifest_shape_rejected | bool
+    fail_msg: >-
+      {{ metrics_server_manifest_shape_case.name }} unexpectedly passed the
+      Metrics Server upstream-shape gate.
+    quiet: true

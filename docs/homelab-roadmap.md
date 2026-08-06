@@ -8,7 +8,10 @@
 
 - **Hardware:** 3× Dell OptiPlex 7050 (i5-7500T, 16 GB, 256 GB NVMe). Wipe Windows on all three.
 - **OS / K8s:** **Ubuntu Server LTS 24.04 + kubeadm** (upstream Kubernetes) — this is the end state. **Talos migration is parked** (optional future, not planned now).
-- **Monitoring:** **kube-prometheus-stack** (Grafana + Prometheus + Alertmanager), retention/size capped for the small SSDs; Loki for logs later. (Details in `linux-k8s-foundations.md` §7.)
+- **Monitoring:** start with pinned **Metrics Server** for current `kubectl top`
+  CPU/memory, then add **kube-prometheus-stack** (Grafana + Prometheus +
+  Alertmanager) with retention/size capped for the small SSDs; Loki for logs
+  later. (Details in `linux-k8s-foundations.md` §7.)
 - **Disposable environments layer:** **Agent Sandbox** (`kubernetes-sigs/agent-sandbox`) — `SandboxTemplate` + `SandboxWarmPool` + `SandboxClaim`. Yes, this is exactly the layer you described, and we'll use it for it.
 - **Agents:** Claude Code + Codex now; PI later. Baked into the sandbox image.
 - **Example project:** a modern plain Ruby on Rails app.
@@ -118,11 +121,20 @@ Each phase ends in a **milestone** you can verify. Do them in order; don't skip 
 ### Phase 3.5 — Monitoring & observability (Grafana)
 *Goal: see what the cluster is doing. ~1 evening.*
 
+- First rung implemented: the pinned **Metrics Server** role requires
+  `make metrics` to return one current CPU/memory row for every inventory node.
+  It has no history, dashboard, disk/network data, alerts, or logs.
+- Before untrusted Agent Sandbox workloads, replace Metrics Server's temporary
+  kubelet and APIService TLS verification exceptions with signed serving
+  certificates and a stable CA bundle.
 - Deploy **kube-prometheus-stack** via Argo CD into a `monitoring` namespace (Prometheus + Grafana + Alertmanager + node-exporter + kube-state-metrics, with dashboards preloaded).
+- In the same GitOps adoption change, remove Metrics Server from Ansible so
+  Argo CD and Ansible never reconcile the same objects concurrently.
 - **Tune for the small SSDs:** ~15-day retention + a `retentionSize` cap (~10–20 GB) on a local-path PVC; set resource requests/limits; schedule Prometheus off the agent-tainted node.
 - Open Grafana over Tailscale/ingress; watch node CPU/RAM/disk and pod health.
 - Later: add **Loki** for logs; if Prometheus feels heavy, consider **VictoriaMetrics** or offloading to **Grafana Cloud** free tier.
-- **Milestone:** Grafana shows live cluster/node/pod metrics; a test alert fires.
+- **Milestone:** Grafana shows retained cluster/node/pod metrics; a test alert
+  fires. `kubectl top` alone does not complete this milestone.
 
 ### Phase 4 — The Rails sandbox image
 *Goal: a container image = "my project, ready to code in." ~1–2 evenings.*

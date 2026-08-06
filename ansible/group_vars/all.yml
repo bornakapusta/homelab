@@ -104,7 +104,8 @@ pod_cidr: "10.244.0.0/16"
 # CHECK THESE BEFORE YOUR FIRST RUN. Kubernetes/containerd were verified
 # 2026-07-26; the Cilium release and chart digest were verified 2026-07-31;
 # Tailscale 1.96.2 and its resolute signing key were verified 2026-08-01;
-# MetalLB and Traefik release metadata were verified 2026-08-02/03.
+# MetalLB and Traefik release metadata were verified 2026-08-02/03;
+# Metrics Server release metadata was verified 2026-08-06.
 #   Kubernetes: https://kubernetes.io/releases/
 #   Cilium:     https://github.com/cilium/cilium/releases
 #   containerd: https://download.docker.com/linux/ubuntu/dists/resolute/stable/binary-amd64/Packages
@@ -191,6 +192,24 @@ traefik_image_sha256: "21a3d83696379bac6434bb32e1dde0aff0e84ef2abd053ed3db87d3f4
 # This address is inside lan-pool but outside the FRITZ!Box DHCP range. MetalLB
 # makes it reachable; Traefik listens behind it and routes HTTP by Ingress rule.
 traefik_load_balancer_ip: 192.168.178.240
+
+# Metrics Server is the first observability rung: current CPU and memory through
+# metrics.k8s.io and `kubectl top`, with no history, dashboards, alerts, or logs.
+# The official release manifest and multi-architecture image index were verified
+# on 2026-08-06.
+metrics_server_version: "0.9.0"
+# sha256 of the versioned release manifest:
+# https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.9.0/components.yaml
+metrics_server_manifest_sha256: "1cec29a5267809306a2c6ec74a3e449abbb705b4a8beed0c8a1963910f72c79b"
+# Multi-architecture OCI index digest reported by:
+#   docker buildx imagetools inspect registry.k8s.io/metrics-server/metrics-server:v0.9.0
+metrics_server_image_sha256: "d9862115e7c7881280d3d75ca26bda8ffc0fc213315979575bf23ce9826205c0"
+
+# kubeadm currently gives kubelets self-signed serving certificates. This
+# explicit acknowledgement permits --kubelet-insecure-tls for this private,
+# trusted-node first rung only. Replace it with signed kubelet certificates and
+# remove the APIService TLS skip before running untrusted sandbox workloads.
+metrics_server_kubelet_insecure_tls_acknowledged: true
 
 # base_packages moved to roles/base/defaults/main.yml — it is a property of the
 # base role, not a site setting. Override it here only if you need extras.

@@ -112,7 +112,8 @@ In one paragraph: your laptop runs **herdr** and reaches the cluster over **Tail
 
 ### Phase 2.5 — The batteries kubeadm omits
 - [x] Install **MetalLB** with a confirmed LAN IP pool.
-- [ ] Install **Traefik** ingress, then **local-path-provisioner** (default StorageClass).
+- [x] Install **Traefik** ingress.
+- [ ] Install **local-path-provisioner** (default StorageClass).
 - Traefik replaces the retired ingress-nginx project; this bootstrap uses only
   standard Kubernetes Ingress resources, not Traefik CRDs.
 - **Done:** an app with a PVC is reachable via MetalLB + Ingress on the LAN.
@@ -131,8 +132,16 @@ In one paragraph: your laptop runs **herdr** and reaches the cluster over **Tail
 - **Done:** etcd snapshot exists, Argo CD syncs from git, secrets encrypted.
 
 ### Phase 3.5 — Monitoring (Grafana)
-- [ ] Deploy **kube-prometheus-stack** via Argo CD in `monitoring` ns; cap retention/size for the SSDs.
-- [ ] Install **metrics-server**; `kubectl top nodes` works.
+- [x] Reconcile the pinned **Metrics Server** first rung through Ansible;
+  `make metrics` must return CPU and memory for exactly all inventory nodes.
+  This supplies short-lived resource metrics only: no history, disk/network
+  metrics, dashboard, alert, or logs.
+- [ ] Replace both temporary Metrics Server TLS verification exceptions with
+  signed kubelet serving certificates and a stable APIService CA bundle before
+  untrusted sandbox workloads run.
+- [ ] Deploy **kube-prometheus-stack** via Argo CD in `monitoring` ns; cap
+  retention/size for the SSDs. Adopt Metrics Server and remove its Ansible role
+  in the same change so two controllers never own it simultaneously.
 - **Done:** Grafana shows live metrics; a test alert fires.
 
 ### Phase 4 — Rails sandbox image
