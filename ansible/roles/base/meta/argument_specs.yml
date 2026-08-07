@@ -4,6 +4,7 @@ argument_specs:
     short_description: Baseline OS configuration, identical on every node
     description:
       - Hostname, timezone, chrony, apt upgrade, base packages, WiFi power-save.
+      - Loads the kernel modules that expose hardware temperatures via hwmon.
       - >-
         Also a patch event - this role runs `apt upgrade`, so every application
         may pull a kernel. Nothing reboots; a pending reboot is reported instead.
@@ -28,6 +29,21 @@ argument_specs:
         description:
           - Packages installed on every node. Each entry has a named consumer.
           - Override only to add site-specific extras; see defaults/main.yml.
+        type: list
+        elements: str
+        required: false
+      base_sensor_modules:
+        description:
+          - Kernel modules loaded to populate /sys/class/hwmon, the only source
+            of temperature data on these machines.
+          - >-
+            coretemp normally autoloads from the CPU modalias, but the failure
+            when it does not is silent - no module means no hwmon entry, so the
+            metric never appears rather than erroring. Loading it explicitly
+            makes the outcome deterministic.
+          - >-
+            Written to /etc/modules-load.d/sensors.conf and modprobed in the same
+            run, so the modules are present now and after the next reboot.
         type: list
         elements: str
         required: false

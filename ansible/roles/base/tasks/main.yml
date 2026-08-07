@@ -88,6 +88,36 @@
     state: started
     daemon_reload: true
 
+# --- hardware sensors ------------------------------------------------------
+# Populate /sys/class/hwmon so temperatures are readable. This lives in `base`
+# rather than `kubernetes_node` on purpose: sensing the hardware is a property
+# of the machine, not a kubeadm prerequisite. These boxes should report their
+# own temperature whether or not Kubernetes is ever installed on them.
+#
+# Consumed later by node_exporter's hwmon collector (node_hwmon_temp_celsius),
+# which reads the sysfs tree directly — nothing here has to be running for that
+# to work, the modules just have to be loaded.
+#
+# Plain tasks, no handler. `meta: flush_handlers` in the kubernetes_node role is
+# play-global rather than role-scoped, so a handler added here would fire at a
+# point decided by a different role — see the comment on that task.
+- name: Load hardware sensor modules at boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/sensors.conf
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+    content: |
+      {{ __base_managed_header }}
+      {{ base_sensor_modules | join('\n') }}
+
+- name: Load sensor modules now
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ base_sensor_modules }}"
+
 # --- reboot reporting ------------------------------------------------------
 # `apt upgrade` above can pull a kernel. Nothing here reboots: on a cluster you
 # drain first, by hand, one node at a time. Surface the pending work so it does

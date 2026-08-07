@@ -14,6 +14,10 @@
 #   chrony          clock sync; skew breaks etcd and TLS (enabled in tasks/main.yml)
 #   iw              the WiFi power-save-off unit shells out to /usr/sbin/iw
 #   ca-certificates, gnupg   apt repository trust and bootstrap tooling
+#   lm-sensors      `sensors` — human verification that the hwmon block below
+#                   actually produced readings. NOT a runtime dependency of
+#                   anything: node_exporter's hwmon collector reads
+#                   /sys/class/hwmon directly and never shells out to `sensors`.
 base_packages:
   - curl
   - vim
@@ -24,3 +28,18 @@ base_packages:
   - ca-certificates
   - gnupg
   - iw
+  - lm-sensors
+
+# Kernel modules that populate /sys/class/hwmon, which is the only source of
+# temperature data on these machines.
+#
+# coretemp is the Intel per-core/package sensor. It normally autoloads from the
+# CPU modalias, but "normally" is not "always", and the failure is silent: no
+# module means no hwmon entry, which means the metric simply never appears
+# rather than erroring. Loading it explicitly makes the outcome deterministic.
+#
+# dell-smm-hwmon (fan speeds, chassis sensors) is deliberately NOT here — it is
+# unreliable across Dell desktop models and needs force=1 on many of them. Add
+# it per-site only after confirming it behaves on the actual hardware.
+base_sensor_modules:
+  - coretemp
