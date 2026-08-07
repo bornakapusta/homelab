@@ -8,6 +8,34 @@ origin: docs/brainstorms/2026-08-06-node-metrics-dashboard-requirements.md
 
 # ✨ feat: Node metrics dashboard and GitOps platform bootstrap
 
+> ## ⚠️ CORRECTION — 2026-08-07
+>
+> **This plan was written against `master`, which was 7 commits behind `main`.**
+> The requirements in the origin document still stand; several stages below do not.
+> Corrected status:
+>
+> | Plan said | Reality on `main` | Status |
+> |---|---|---|
+> | Stage 0 — sensors in `base` | merged (`62ffe89`) | ✅ **done**, gate still unrun |
+> | Stage 1 — Argo CD first, everything as Argo apps | `platform.yml` deliberately bootstraps platform services *"before Argo CD exists"*, via Ansible + Helm | ❌ **superseded** |
+> | Stage 2b — Argo deploys MetalLB | `roles/metallb` exists, with a router-DHCP safety gate | ✅ **done**, differently |
+> | Stage 2c — Argo deploys **ingress-nginx** | `roles/traefik` — the ingress choice is **Traefik** | ❌ **wrong component** |
+> | Stage 2a — local-path-provisioner | nothing anywhere; no StorageClass exists | ⛔ **still the blocker** |
+> | Stage 3 — metrics-server | `roles/metrics_server` exists on unmerged `feat/node-resource-metrics` | ⚠️ **duplicate risk** |
+> | Calico manifest as the pattern to copy | Calico replaced by **Cilium** (`41e68b0`); `control_plane` now uses a Helm reconcile pattern with drift detection | ❌ **stale reference** |
+> | Nodes at `.26/.27/.28` | `.11/.44/.66` (`19c42d9`); also Ubuntu **26.04**, not 24.04 | ❌ **stale** |
+>
+> **The architectural correction that matters:** this repo settled on *Ansible +
+> Helm roles applied by `platform.yml`*, with Argo CD explicitly deferred. The
+> right shape for monitoring is therefore a **`kube_prometheus_stack` role
+> following the `metallb`/`traefik`/`control_plane` Helm pattern** — not an Argo
+> CD Application. Everything in "Key Decisions" about *placement*, *retention*,
+> *alert-rule pruning* and *ntfy* survives unchanged; only the delivery mechanism
+> changes.
+>
+> Risk **R-2 (MetalLB L2/ARP over WiFi) is still live** — `roles/metallb`
+> has no WiFi mitigation, and it has never been tested against hardware.
+
 ## Overview
 
 Stand up per-node hardware visibility (CPU, RAM, disk, network, **temperatures**)
