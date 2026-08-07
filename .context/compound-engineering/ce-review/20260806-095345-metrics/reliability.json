@@ -1,0 +1,8 @@
+{
+  "reviewer": "reliability",
+  "findings": [],
+  "residual_risks": [
+    "Each reconciliation depends on downloading the pinned upstream manifest; an upstream or network outage fails closed and leaves the existing live deployment untouched, but there is no offline cache."
+  ],
+  "testing_gaps": []
+}

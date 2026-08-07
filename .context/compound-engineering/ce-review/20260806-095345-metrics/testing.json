@@ -1,0 +1,25 @@
+{
+  "reviewer": "testing",
+  "findings": [
+    {
+      "title": "State decisions lacked controller tests",
+      "severity": "P2",
+      "file": "ansible/tests/metrics_server_validation.yml",
+      "line": 201,
+      "why_it_matters": "Regressions in unowned-resource rejection or kubectl diff result handling could silently adopt another installation or mutate an already exact cluster despite the plan requiring local state-decision coverage.",
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "suggested_fix": "Extract pure ownership and diff-result tasks and cover absent, owned, unowned, exact, and drifted cases in the local validation playbook.",
+      "confidence": 0.95,
+      "evidence": [
+        "Initial review snapshot: the suite covered input and manifest-shape validation but had no cases for ownership collision or diff rc 0/1 decisions described in Unit 2 of the plan."
+      ],
+      "pre_existing": false
+    }
+  ],
+  "residual_risks": [],
+  "testing_gaps": [
+    "The destructive integration cases for a stopped kubelet or deliberately blocked scrape path were not induced on the live homelab; normal complete-path and unchanged rerun behavior were verified instead."
+  ]
+}

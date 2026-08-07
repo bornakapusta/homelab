@@ -1,0 +1,20 @@
+---
+- name: Evaluate diff result for {{ metrics_server_reconcile_state_case.name }}
+  ansible.builtin.include_role:
+    name: metrics_server
+    tasks_from: reconcile_state
+    public: true
+  vars:
+    __metrics_server_manifest_diff:
+      rc: "{{ metrics_server_reconcile_state_case.rc }}"
+
+- name: Reconciliation decision must match for {{ metrics_server_reconcile_state_case.name }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        __metrics_server_needs_reconcile | bool
+        == metrics_server_reconcile_state_case.expect_reconcile | bool
+    fail_msg: >-
+      {{ metrics_server_reconcile_state_case.name }} produced the wrong
+      reconciliation decision.
+    quiet: true

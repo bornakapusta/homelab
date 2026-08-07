@@ -1,0 +1,110 @@
+---
+# Role constants. These describe the exact upstream object set and the narrow
+# homelab transformation applied before kubectl can inspect or reconcile it.
+
+__metrics_server_namespace: kube-system
+
+__metrics_server_manifest_url: >-
+  https://github.com/kubernetes-sigs/metrics-server/releases/download/v{{ metrics_server_version }}/components.yaml
+
+__metrics_server_upstream_image: >-
+  registry.k8s.io/metrics-server/metrics-server:v{{ metrics_server_version }}
+
+__metrics_server_image: >-
+  {{ __metrics_server_upstream_image }}@sha256:{{ metrics_server_image_sha256 }}
+
+__metrics_server_owner_annotation: >-
+  homelab.home.arpa/metrics-server-managed-by
+
+__metrics_server_owner_value: ansible-metrics-server
+
+__metrics_server_manifest_annotation: >-
+  homelab.home.arpa/metrics-server-manifest-sha256
+
+__metrics_server_managed_annotations:
+  homelab.home.arpa/metrics-server-managed-by: ansible-metrics-server
+  homelab.home.arpa/metrics-server-manifest-sha256: >-
+    {{ metrics_server_manifest_sha256 }}
+
+__metrics_server_template_annotations:
+  homelab.home.arpa/metrics-server-manifest-sha256: >-
+    {{ metrics_server_manifest_sha256 }}
+
+__metrics_server_upstream_container_args:
+  - --cert-dir=/tmp
+  - --secure-port=10250
+  - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
+  - --kubelet-use-node-status-port
+  - --metric-resolution=15s
+
+__metrics_server_container_args:
+  - --cert-dir=/tmp
+  - "--secure-port={{ metrics_server_secure_port }}"
+  - --kubelet-preferred-address-types=InternalIP,Hostname
+  - --kubelet-use-node-status-port
+  - --metric-resolution=15s
+  - --kubelet-insecure-tls
+
+__metrics_server_resources:
+  requests:
+    cpu: 100m
+    memory: 200Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+__metrics_server_expected_resource_keys:
+  - v1|ServiceAccount|kube-system|metrics-server
+  - rbac.authorization.k8s.io/v1|ClusterRole|_cluster|system:aggregated-metrics-reader
+  - rbac.authorization.k8s.io/v1|ClusterRole|_cluster|system:metrics-server
+  - rbac.authorization.k8s.io/v1|RoleBinding|kube-system|metrics-server-auth-reader
+  - rbac.authorization.k8s.io/v1|ClusterRoleBinding|_cluster|metrics-server:system:auth-delegator
+  - rbac.authorization.k8s.io/v1|ClusterRoleBinding|_cluster|system:metrics-server
+  - v1|Service|kube-system|metrics-server
+  - apps/v1|Deployment|kube-system|metrics-server
+  - apiregistration.k8s.io/v1|APIService|_cluster|v1beta1.metrics.k8s.io
+
+__metrics_server_managed_resources:
+  - resource: serviceaccounts
+    namespace: kube-system
+    name: metrics-server
+  - resource: clusterroles.rbac.authorization.k8s.io
+    namespace: ""
+    name: system:aggregated-metrics-reader
+  - resource: clusterroles.rbac.authorization.k8s.io
+    namespace: ""
+    name: system:metrics-server
+  - resource: rolebindings.rbac.authorization.k8s.io
+    namespace: kube-system
+    name: metrics-server-auth-reader
+  - resource: clusterrolebindings.rbac.authorization.k8s.io
+    namespace: ""
+    name: metrics-server:system:auth-delegator
+  - resource: clusterrolebindings.rbac.authorization.k8s.io
+    namespace: ""
+    name: system:metrics-server
+  - resource: services
+    namespace: kube-system
+    name: metrics-server
+  - resource: deployments.apps
+    namespace: kube-system
+    name: metrics-server
+  - resource: apiservices.apiregistration.k8s.io
+    namespace: ""
+    name: v1beta1.metrics.k8s.io
+
+__metrics_server_kubectl_argv:
+  - kubectl
+  - --request-timeout=30s
+  - --kubeconfig
+  - "{{ metrics_server_kubeconfig }}"
+  - --server
+  - "https://{{ ansible_host }}:6443"
+
+__metrics_server_kubectl_wait_argv:
+  - kubectl
+  - --request-timeout=210s
+  - --kubeconfig
+  - "{{ metrics_server_kubeconfig }}"
+  - --server
+  - "https://{{ ansible_host }}:6443"

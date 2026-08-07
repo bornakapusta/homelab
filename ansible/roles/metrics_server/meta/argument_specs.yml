@@ -1,0 +1,48 @@
+---
+argument_specs:
+  main:
+    short_description: Install pinned Metrics Server for current node metrics
+    description:
+      - Applies a checksum-pinned official Metrics Server manifest.
+      - Exposes only the aggregated Resource Metrics API through Kubernetes.
+      - >-
+        Uses an explicitly acknowledged temporary kubelet TLS verification
+        exception while the kubeadm serving-certificate lifecycle is deferred.
+    options:
+      metrics_server_version:
+        description: Exact Metrics Server application and manifest version.
+        type: str
+        required: true
+      metrics_server_manifest_sha256:
+        description: SHA-256 of the official release components manifest.
+        type: str
+        required: true
+      metrics_server_image_sha256:
+        description: Multi-architecture OCI image-index SHA-256.
+        type: str
+        required: true
+      metrics_server_kubelet_insecure_tls_acknowledged:
+        description:
+          - >-
+            Explicit acknowledgement that Metrics Server will not verify the
+            current kubeadm kubelet serving certificates.
+        type: bool
+        required: true
+      metrics_server_secure_port:
+        description: Worker host-network port reserved by Metrics Server.
+        type: int
+        required: false
+      metrics_server_kubeconfig:
+        description: Admin kubeconfig fetched by the control_plane role.
+        type: str
+        required: false
+      metrics_server_cluster_hosts:
+        description: Exact inventory node names expected in the metrics API.
+        type: list
+        elements: str
+        required: false
+      metrics_server_worker_hosts:
+        description: Inventory workers eligible to host Metrics Server.
+        type: list
+        elements: str
+        required: false

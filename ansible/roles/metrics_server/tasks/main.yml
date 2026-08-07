@@ -1,0 +1,521 @@
+---
+# Reconcile the checksum-pinned official manifest from the controller, then
+# prove the complete API-server -> Metrics Server -> kubelet path for every
+# inventory node. No task installs packages directly on a node.
+
+- name: Validate Metrics Server operator inputs
+  ansible.builtin.include_tasks: validate.yml
+
+- name: Locate the fetched admin kubeconfig
+  ansible.builtin.stat:
+    path: "{{ metrics_server_kubeconfig }}"
+  delegate_to: localhost
+  run_once: true
+  register: __metrics_server_kubeconfig_stat
+
+- name: The cluster must be bootstrapped before Metrics Server
+  ansible.builtin.assert:
+    that:
+      - __metrics_server_kubeconfig_stat.stat.exists
+      - __metrics_server_kubeconfig_stat.stat.isreg
+    fail_msg: >-
+      {{ metrics_server_kubeconfig }} does not exist. Run `make cluster` first;
+      the control_plane role fetches the admin kubeconfig used here.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Read current cluster nodes before adding Metrics Server
+  ansible.builtin.command:
+    argv: >-
+      {{ __metrics_server_kubectl_argv + [
+           'get', 'nodes', '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  register: __metrics_server_nodes_raw
+  changed_when: false
+
+- name: Parse current cluster node names
+  ansible.builtin.set_fact:
+    __metrics_server_live_node_names: >-
+      {{ ((__metrics_server_nodes_raw.stdout | from_json)['items']
+          | map(attribute='metadata.name') | list) }}
+  run_once: true
+
+- name: The live cluster must match the inventory exactly
+  ansible.builtin.assert:
+    that:
+      - >-
+        __metrics_server_live_node_names | sort
+        == metrics_server_cluster_hosts | sort
+    fail_msg: >-
+      Refusing to install Metrics Server because the API node set
+      ({{ __metrics_server_live_node_names | sort | join(', ') }}) does not
+      exactly match cluster_hosts
+      ({{ metrics_server_cluster_hosts | sort | join(', ') }}).
+      Reconcile inventory and cluster membership first.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Confirm each inventory node is Ready before adding Metrics Server
+  ansible.builtin.command:
+    argv: >-
+      {{ __metrics_server_kubectl_argv + [
+           'wait', '--for=condition=Ready', 'node/' ~ item, '--timeout=30s'
+         ] }}
+  loop: "{{ metrics_server_cluster_hosts }}"
+  loop_control:
+    label: "{{ item }}"
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  changed_when: false
+
+- name: Inspect well-known Metrics Server resources before adoption
+  ansible.builtin.command:
+    argv: >-
+      {{ __metrics_server_kubectl_argv
+         + (['--namespace', item.namespace]
+            if item.namespace | length > 0 else [])
+         + [
+             'get', item.resource, item.name, '--ignore-not-found',
+             '--output', 'json'
+           ] }}
+  loop: "{{ __metrics_server_managed_resources }}"
+  loop_control:
+    label: >-
+      {{ (item.namespace ~ '/' if item.namespace | length > 0 else '')
+         ~ item.resource ~ '/' ~ item.name }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  register: __metrics_server_existing_resources_raw
+  changed_when: false
+
+- name: Evaluate Metrics Server ownership
+  ansible.builtin.include_tasks: ownership_state.yml
+
+- name: Stage, compare, and reconcile the pinned Metrics Server manifest
+  block:
+    - name: Create temporary storage for the Metrics Server manifest
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: metrics-server-
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      register: __metrics_server_temp_dir
+      changed_when: false
+
+    - name: Download the checksum-pinned official Metrics Server manifest
+      ansible.builtin.get_url:
+        url: "{{ __metrics_server_manifest_url }}"
+        dest: "{{ __metrics_server_temp_dir.path }}/components-upstream.yml"
+        checksum: "sha256:{{ metrics_server_manifest_sha256 }}"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      changed_when: false
+
+    - name: Read the verified upstream Metrics Server manifest
+      ansible.builtin.slurp:
+        path: "{{ __metrics_server_temp_dir.path }}/components-upstream.yml"
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      register: __metrics_server_manifest_raw
+
+    - name: Decode the verified Metrics Server manifest
+      ansible.builtin.set_fact:
+        __metrics_server_source_manifest_content: >-
+          {{ __metrics_server_manifest_raw.content | b64decode }}
+        __metrics_server_source_objects: >-
+          {{ __metrics_server_manifest_raw.content | b64decode
+             | from_yaml_all | list }}
+      run_once: true
+
+    - name: Prepare the deterministic homelab Metrics Server manifest
+      ansible.builtin.include_tasks: prepare_manifest.yml
+
+    - name: Render the desired Metrics Server object set
+      ansible.builtin.template:
+        src: components.yml.j2
+        dest: "{{ __metrics_server_temp_dir.path }}/components-homelab.yml"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      changed_when: false
+
+    - name: Read the rendered Metrics Server manifest
+      ansible.builtin.slurp:
+        path: "{{ __metrics_server_temp_dir.path }}/components-homelab.yml"
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      register: __metrics_server_rendered_manifest_raw
+
+    - name: Parse the rendered Metrics Server manifest again
+      ansible.builtin.set_fact:
+        __metrics_server_rendered_objects: >-
+          {{ __metrics_server_rendered_manifest_raw.content | b64decode
+             | from_yaml_all | list }}
+        __metrics_server_rendered_resource_keys: []
+      run_once: true
+
+    - name: Inventory the rendered Metrics Server resource keys
+      ansible.builtin.set_fact:
+        __metrics_server_rendered_resource_keys: >-
+          {{ __metrics_server_rendered_resource_keys + [
+               item.apiVersion ~ '|' ~ item.kind ~ '|' ~
+               (item.metadata.namespace | default('_cluster')) ~ '|' ~
+               item.metadata.name
+             ] }}
+      loop: "{{ __metrics_server_rendered_objects }}"
+      loop_control:
+        label: "{{ item.kind }}/{{ item.metadata.name }}"
+      run_once: true
+
+    - name: Confirm rendering preserved the complete object set
+      ansible.builtin.assert:
+        that:
+          - __metrics_server_rendered_objects | length == 9
+          - >-
+            __metrics_server_rendered_resource_keys | sort
+            == __metrics_server_expected_resource_keys | sort
+        fail_msg: >-
+          The rendered Metrics Server YAML did not round-trip to the complete
+          nine-object set. Refusing to pass it to kubectl.
+        quiet: true
+      delegate_to: localhost
+      run_once: true
+
+    - name: Compare the complete desired Metrics Server object set
+      ansible.builtin.command:
+        argv: >-
+          {{ __metrics_server_kubectl_argv + [
+               'diff', '--server-side=true',
+               '--field-manager=ansible-metrics-server', '--force-conflicts',
+               '--filename',
+               __metrics_server_temp_dir.path ~ '/components-homelab.yml'
+             ] }}
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      register: __metrics_server_manifest_diff
+      failed_when: __metrics_server_manifest_diff.rc not in [0, 1]
+      changed_when: false
+
+    - name: Evaluate the Metrics Server diff result
+      ansible.builtin.include_tasks: reconcile_state.yml
+
+    - name: Predict Metrics Server reconciliation
+      ansible.builtin.debug:
+        msg: >-
+          Metrics Server {{ metrics_server_version }} would be reconciled from
+          the checksum-verified manifest and immutable image digest.
+      when:
+        - ansible_check_mode
+        - __metrics_server_needs_reconcile
+      changed_when: true
+      run_once: true
+
+    - name: Reconcile the complete Metrics Server object set
+      ansible.builtin.command:
+        argv: >-
+          {{ __metrics_server_kubectl_argv + [
+               'apply', '--server-side=true',
+               '--field-manager=ansible-metrics-server', '--force-conflicts',
+               '--filename',
+               __metrics_server_temp_dir.path ~ '/components-homelab.yml'
+             ] }}
+      delegate_to: localhost
+      become: false
+      when:
+        - not ansible_check_mode
+        - __metrics_server_needs_reconcile
+      register: __metrics_server_manifest_apply
+      changed_when: true
+
+    - name: Verify the live Metrics Server path
+      when: not ansible_check_mode
+      block:
+        - name: Wait for the Metrics Server Deployment
+          ansible.builtin.command:
+            argv: >-
+              {{ __metrics_server_kubectl_wait_argv + [
+                   '--namespace', __metrics_server_namespace,
+                   'rollout', 'status', 'deployment/metrics-server',
+                   '--timeout=180s'
+                 ] }}
+          delegate_to: localhost
+          check_mode: false
+          changed_when: false
+
+        - name: Wait for the Resource Metrics APIService
+          ansible.builtin.command:
+            argv: >-
+              {{ __metrics_server_kubectl_wait_argv + [
+                   'wait', '--for=condition=Available',
+                   'apiservice/v1beta1.metrics.k8s.io', '--timeout=180s'
+                 ] }}
+          delegate_to: localhost
+          check_mode: false
+          changed_when: false
+
+        - name: Read the live Metrics Server Deployment
+          ansible.builtin.command:
+            argv: >-
+              {{ __metrics_server_kubectl_argv + [
+                   '--namespace', __metrics_server_namespace, 'get',
+                   'deployment', 'metrics-server', '--output', 'json'
+                 ] }}
+          delegate_to: localhost
+          check_mode: false
+          register: __metrics_server_deployment_raw
+          changed_when: false
+
+        - name: Read the live Metrics Server Service
+          ansible.builtin.command:
+            argv: >-
+              {{ __metrics_server_kubectl_argv + [
+                   '--namespace', __metrics_server_namespace, 'get', 'service',
+                   'metrics-server', '--output', 'json'
+                 ] }}
+          delegate_to: localhost
+          check_mode: false
+          register: __metrics_server_service_raw
+          changed_when: false
+
+        - name: Read the live Resource Metrics APIService
+          ansible.builtin.command:
+            argv: >-
+              {{ __metrics_server_kubectl_argv + [
+                   'get', 'apiservice', 'v1beta1.metrics.k8s.io',
+                   '--output', 'json'
+                 ] }}
+          delegate_to: localhost
+          check_mode: false
+          register: __metrics_server_api_service_raw
+          changed_when: false
+
+        - name: Read active Metrics Server pods
+          ansible.builtin.command:
+            argv: >-
+              {{ __metrics_server_kubectl_argv + [
+                   '--namespace', __metrics_server_namespace, 'get', 'pods',
+                   '--selector', 'k8s-app=metrics-server', '--output', 'json'
+                 ] }}
+          delegate_to: localhost
+          check_mode: false
+          register: __metrics_server_pods_raw
+          changed_when: false
+
+        - name: Parse the live Metrics Server resources
+          ansible.builtin.set_fact:
+            __metrics_server_live_deployment: >-
+              {{ __metrics_server_deployment_raw.stdout | from_json }}
+            __metrics_server_live_service: >-
+              {{ __metrics_server_service_raw.stdout | from_json }}
+            __metrics_server_live_api_service: >-
+              {{ __metrics_server_api_service_raw.stdout | from_json }}
+            __metrics_server_active_pods: >-
+              {{ (__metrics_server_pods_raw.stdout | from_json)['items']
+                 | rejectattr('metadata.deletionTimestamp', 'defined') | list }}
+          run_once: true
+
+        - name: Select the live Metrics Server pod and container
+          ansible.builtin.set_fact:
+            __metrics_server_live_pod: "{{ __metrics_server_active_pods | first }}"
+            __metrics_server_live_container: >-
+              {{ __metrics_server_live_deployment.spec.template.spec.containers
+                 | first }}
+          when: __metrics_server_active_pods | length == 1
+          run_once: true
+
+        - name: Confirm the live network, image, placement, and TLS contract
+          ansible.builtin.assert:
+            that:
+              - __metrics_server_live_deployment.spec.replicas == 1
+              - __metrics_server_live_deployment.status.readyReplicas | default(0) == 1
+              - __metrics_server_active_pods | length == 1
+              - >-
+                __metrics_server_live_pod.spec.nodeName
+                in metrics_server_worker_hosts
+              - __metrics_server_live_container.image == __metrics_server_image
+              - __metrics_server_live_container.args == __metrics_server_container_args
+              - >-
+                __metrics_server_live_container.resources
+                == __metrics_server_resources
+              - __metrics_server_live_container.securityContext.runAsNonRoot | bool
+              - >-
+                __metrics_server_live_container.securityContext.readOnlyRootFilesystem
+                | bool
+              - >-
+                not (
+                  __metrics_server_live_container.securityContext
+                  .allowPrivilegeEscalation | bool
+                )
+              - >-
+                __metrics_server_live_container.securityContext.seccompProfile.type
+                == 'RuntimeDefault'
+              - >-
+                __metrics_server_live_container.securityContext.capabilities.drop
+                == ['ALL']
+              - >-
+                __metrics_server_live_container.args
+                | select('equalto', '--kubelet-insecure-tls')
+                | list | length == 1
+              - >-
+                __metrics_server_live_container.ports[0].containerPort
+                == metrics_server_secure_port | int
+              - >-
+                __metrics_server_live_container.ports[0].hostPort
+                == metrics_server_secure_port | int
+              - __metrics_server_live_deployment.spec.template.spec.hostNetwork | bool
+              - >-
+                __metrics_server_live_deployment.spec.template.spec.dnsPolicy
+                == 'ClusterFirstWithHostNet'
+              - >-
+                __metrics_server_live_deployment.spec.template.spec.nodeSelector[
+                  'node-role.kubernetes.io/worker'
+                ] == 'worker'
+              - >-
+                __metrics_server_live_deployment.spec.template.spec.tolerations
+                | default([]) | length == 0
+              - >-
+                __metrics_server_live_service.spec.ports[0].targetPort
+                == metrics_server_secure_port | int
+              - __metrics_server_live_service.spec.type == 'ClusterIP'
+              - __metrics_server_live_api_service.spec.insecureSkipTLSVerify | bool
+              - __metrics_server_live_api_service.spec.service.name == 'metrics-server'
+              - >-
+                __metrics_server_live_api_service.spec.service.namespace
+                == __metrics_server_namespace
+            fail_msg: >-
+              The live Metrics Server resources do not match the one-replica,
+              immutable-image, worker host-network, port, or TLS contract.
+            quiet: true
+          delegate_to: localhost
+          run_once: true
+
+        - name: Wait for fresh CPU and memory metrics from every inventory node
+          ansible.builtin.command:
+            argv: >-
+              {{ __metrics_server_kubectl_argv + [
+                   'get', '--raw', '/apis/metrics.k8s.io/v1beta1/nodes'
+                 ] }}
+          delegate_to: localhost
+          check_mode: false
+          register: __metrics_server_node_metrics_raw
+          changed_when: false
+          failed_when: false
+          retries: 24
+          delay: 5
+          until: >-
+            __metrics_server_node_metrics_raw.rc == 0
+            and (
+              (__metrics_server_node_metrics_raw.stdout
+               | default('{"items": []}', true) | from_json)['items']
+              | map(attribute='metadata.name') | sort | list
+            ) == (metrics_server_cluster_hosts | sort)
+            and (
+              (__metrics_server_node_metrics_raw.stdout
+               | default('{"items": []}', true) | from_json)['items']
+              | selectattr('usage.cpu', 'defined') | list | length
+            ) == (metrics_server_cluster_hosts | length)
+            and (
+              (__metrics_server_node_metrics_raw.stdout
+               | default('{"items": []}', true) | from_json)['items']
+              | selectattr('usage.memory', 'defined') | list | length
+            ) == (metrics_server_cluster_hosts | length)
+
+        - name: Parse the complete node-metrics response
+          ansible.builtin.set_fact:
+            __metrics_server_node_metrics: >-
+              {{ __metrics_server_node_metrics_raw.stdout | from_json }}
+          run_once: true
+
+        - name: Confirm every node metric includes a sample time and window
+          ansible.builtin.assert:
+            that:
+              - item.timestamp is defined
+              - item.timestamp | length > 0
+              - item.window is defined
+              - item.window | length > 0
+              - item.usage.cpu is defined
+              - item.usage.memory is defined
+            fail_msg: >-
+              The Resource Metrics API returned an incomplete sample for
+              {{ item.metadata.name }}.
+            quiet: true
+          loop: "{{ __metrics_server_node_metrics['items'] }}"
+          loop_control:
+            label: "{{ item.metadata.name }}"
+          delegate_to: localhost
+          run_once: true
+
+      rescue:
+        - name: Read APIService diagnostics after verification failure
+          ansible.builtin.command:
+            argv: >-
+              {{ __metrics_server_kubectl_argv + [
+                   'get', 'apiservice', 'v1beta1.metrics.k8s.io',
+                   '--output', 'yaml'
+                 ] }}
+          delegate_to: localhost
+          check_mode: false
+          register: __metrics_server_api_diagnostics
+          failed_when: false
+          changed_when: false
+
+        - name: Read Metrics Server logs after verification failure
+          ansible.builtin.command:
+            argv: >-
+              {{ __metrics_server_kubectl_argv + [
+                   '--namespace', __metrics_server_namespace, 'logs',
+                   'deployment/metrics-server', '--tail=100'
+                 ] }}
+          delegate_to: localhost
+          check_mode: false
+          register: __metrics_server_log_diagnostics
+          failed_when: false
+          changed_when: false
+
+        - name: Stop after a failed complete-path verification
+          ansible.builtin.fail:
+            msg: |-
+              Metrics Server reconciliation finished, but complete-path verification failed:
+              {{ ansible_failed_result.msg | default('unknown verification failure') }}
+
+              APIService:
+              {{ __metrics_server_api_diagnostics.stdout | default(__metrics_server_api_diagnostics.stderr, true) }}
+
+              Metrics Server logs:
+              {{ __metrics_server_log_diagnostics.stdout | default(__metrics_server_log_diagnostics.stderr, true) }}
+
+    - name: Report the active node resource-metrics path
+      ansible.builtin.debug:
+        msg: >-
+          Metrics Server {{ metrics_server_version }} is healthy and returns
+          current CPU and memory for
+          {{ metrics_server_cluster_hosts | join(', ') }}. Run
+          `make metrics` to reconcile it and print `kubectl top nodes`.
+      when: not ansible_check_mode
+      run_once: true
+
+  always:
+    - name: Remove temporary Metrics Server manifests
+      ansible.builtin.file:
+        path: "{{ __metrics_server_temp_dir.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      when:
+        - __metrics_server_temp_dir is defined
+        - __metrics_server_temp_dir.path is defined
+      changed_when: false

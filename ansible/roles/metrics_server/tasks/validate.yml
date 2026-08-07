@@ -1,0 +1,43 @@
+---
+# Controller-only validation is separate so make check can exercise all public
+# inputs without requiring a Kubernetes API server.
+
+- name: Validate Metrics Server pins, placement, and TLS acknowledgement
+  ansible.builtin.assert:
+    that:
+      - metrics_server_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+      - metrics_server_manifest_sha256 is match('^[0-9a-f]{64}$')
+      - metrics_server_image_sha256 is match('^[0-9a-f]{64}$')
+      - metrics_server_kubelet_insecure_tls_acknowledged | bool
+      - metrics_server_kubeconfig | length > 0
+      - metrics_server_secure_port | int >= 1024
+      - metrics_server_secure_port | int <= 65535
+      - metrics_server_secure_port | int not in [2379, 2380, 6443, 10250]
+      - metrics_server_cluster_hosts | length > 0
+      - >-
+        metrics_server_cluster_hosts | unique | list | length
+        == metrics_server_cluster_hosts | length
+      - metrics_server_worker_hosts | length > 0
+      - >-
+        metrics_server_worker_hosts | unique | list | length
+        == metrics_server_worker_hosts | length
+      - >-
+        metrics_server_worker_hosts
+        | difference(metrics_server_cluster_hosts) | length == 0
+      - >-
+        metrics_server_cluster_hosts
+        | reject('match', '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$')
+        | list | length == 0
+      - >-
+        metrics_server_worker_hosts
+        | reject('match', '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$')
+        | list | length == 0
+    fail_msg: >-
+      Metrics Server inputs are unsafe. Use exact semantic versions and
+      64-character lowercase SHA-256 values, choose a non-system port above
+      1023, provide unique non-empty inventory node lists, and explicitly set
+      metrics_server_kubelet_insecure_tls_acknowledged=true only after reading
+      the role's transport-security warning.
+    quiet: true
+  delegate_to: localhost
+  run_once: true

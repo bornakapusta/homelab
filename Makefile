@@ -1,4 +1,4 @@
-.PHONY: deps check hooks test ping nodes cluster platform all status hosts reset-help
+.PHONY: deps check hooks test ping nodes cluster platform metrics all status hosts reset-help
 
 ANSIBLE_DIR := ansible
 
@@ -27,6 +27,10 @@ check:
 	  ANSIBLE_ROLES_PATH="$(CURDIR)/$(ANSIBLE_DIR)/roles" \
 	  ANSIBLE_REMOTE_TEMP="/tmp/homelab-ansible-remote" \
 	  ansible-playbook --inventory localhost, tests/traefik_validation.yml
+	cd $(ANSIBLE_DIR) && \
+	  ANSIBLE_ROLES_PATH="$(CURDIR)/$(ANSIBLE_DIR)/roles" \
+	  ANSIBLE_REMOTE_TEMP="/tmp/homelab-ansible-remote" \
+	  ansible-playbook --inventory localhost, tests/metrics_server_validation.yml
 	cd $(ANSIBLE_DIR) && ansible-lint
 
 ## install the git pre-commit hooks (lint + secret scanning)
@@ -70,6 +74,12 @@ cluster:
 ## bootstrap pre-Argo cluster services (MetalLB + Traefik ingress)
 platform:
 	cd $(ANSIBLE_DIR) && ansible-playbook platform.yml
+
+## reconcile Metrics Server and show current CPU/memory for every node
+metrics:
+	cd $(ANSIBLE_DIR) && ansible-playbook platform.yml --tags metrics
+	KUBECONFIG=$(ANSIBLE_DIR)/kubeconfig kubectl \
+	  --server https://$(CP_IP):6443 top nodes
 
 ## nodes + cluster in one go
 all: nodes cluster

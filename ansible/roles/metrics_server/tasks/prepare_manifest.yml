@@ -1,0 +1,325 @@
+---
+# Parse and transform the upstream YAML as objects. Tests can seed
+# __metrics_server_source_objects directly; the live role supplies the decoded
+# checksum-verified manifest in __metrics_server_source_manifest_content.
+
+- name: Parse the Metrics Server source manifest
+  ansible.builtin.set_fact:
+    __metrics_server_source_objects: >-
+      {{ __metrics_server_source_manifest_content | from_yaml_all | list }}
+  when: __metrics_server_source_objects is not defined
+  run_once: true
+
+- name: Confirm the source manifest has the expected document count
+  ansible.builtin.assert:
+    that:
+      - __metrics_server_source_objects is sequence
+      - >-
+        __metrics_server_source_objects | length
+        == __metrics_server_expected_resource_keys | length
+    fail_msg: >-
+      The official Metrics Server manifest no longer contains the expected
+      nine objects. Review the upstream release before changing this role.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Confirm each source document is a named Kubernetes object
+  ansible.builtin.assert:
+    that:
+      - item is mapping
+      - item.apiVersion is string
+      - item.kind is string
+      - item.metadata is mapping
+      - item.metadata.name is string
+    fail_msg: >-
+      The Metrics Server source manifest contains an unexpected document.
+      Refusing to render or apply a partial object set.
+    quiet: true
+  loop: "{{ __metrics_server_source_objects }}"
+  loop_control:
+    label: "{{ item.kind | default('unknown') }}/{{ item.metadata.name | default('unknown') }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Reset the source resource-key inventory
+  ansible.builtin.set_fact:
+    __metrics_server_source_resource_keys: []
+  run_once: true
+
+- name: Inventory the source resource keys
+  ansible.builtin.set_fact:
+    __metrics_server_source_resource_keys: >-
+      {{ __metrics_server_source_resource_keys + [
+           item.apiVersion ~ '|' ~ item.kind ~ '|' ~
+           (item.metadata.namespace | default('_cluster')) ~ '|' ~
+           item.metadata.name
+         ] }}
+  loop: "{{ __metrics_server_source_objects }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+  run_once: true
+
+- name: Confirm the exact upstream resource set
+  ansible.builtin.assert:
+    that:
+      - >-
+        __metrics_server_source_resource_keys | sort
+        == __metrics_server_expected_resource_keys | sort
+    fail_msg: >-
+      The Metrics Server release added, removed, renamed, or moved an object.
+      Review the new upstream manifest instead of applying an incomplete set.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Select source objects that receive homelab transformations
+  ansible.builtin.set_fact:
+    __metrics_server_source_deployment: >-
+      {{ __metrics_server_source_objects
+         | selectattr('kind', 'equalto', 'Deployment') | first }}
+    __metrics_server_source_service: >-
+      {{ __metrics_server_source_objects
+         | selectattr('kind', 'equalto', 'Service') | first }}
+    __metrics_server_source_api_service: >-
+      {{ __metrics_server_source_objects
+         | selectattr('kind', 'equalto', 'APIService') | first }}
+  run_once: true
+
+- name: Select the source Metrics Server container
+  ansible.builtin.set_fact:
+    __metrics_server_source_container: >-
+      {{ __metrics_server_source_deployment.spec.template.spec.containers
+         | first }}
+  run_once: true
+
+- name: Confirm the transform-sensitive upstream shape
+  ansible.builtin.assert:
+    that:
+      - __metrics_server_source_deployment.spec.template.spec.containers | length == 1
+      - __metrics_server_source_container.name == 'metrics-server'
+      - __metrics_server_source_container.image == __metrics_server_upstream_image
+      - >-
+        __metrics_server_source_container.args
+        == __metrics_server_upstream_container_args
+      - __metrics_server_source_container.ports | length == 1
+      - __metrics_server_source_container.ports[0].name == 'https'
+      - __metrics_server_source_container.ports[0].containerPort == 10250
+      - __metrics_server_source_container.ports[0].protocol == 'TCP'
+      - >-
+        __metrics_server_source_container.resources
+        == {'requests': {'cpu': '100m', 'memory': '200Mi'}}
+      - __metrics_server_source_container.securityContext.runAsNonRoot | bool
+      - __metrics_server_source_container.securityContext.readOnlyRootFilesystem | bool
+      - >-
+        not (__metrics_server_source_container.securityContext.allowPrivilegeEscalation | bool)
+      - >-
+        __metrics_server_source_container.securityContext.seccompProfile.type
+        == 'RuntimeDefault'
+      - >-
+        __metrics_server_source_deployment.spec.template.spec.nodeSelector
+        == {'kubernetes.io/os': 'linux'}
+      - >-
+        __metrics_server_source_deployment.spec.template.spec.tolerations
+        | default([]) | length == 0
+      - __metrics_server_source_service.spec.ports | length == 1
+      - __metrics_server_source_service.spec.ports[0].port == 443
+      - __metrics_server_source_service.spec.ports[0].targetPort == 'https'
+      - >-
+        __metrics_server_source_service.spec.selector
+        == {'k8s-app': 'metrics-server'}
+      - __metrics_server_source_api_service.spec.insecureSkipTLSVerify | bool
+      - __metrics_server_source_api_service.spec.service.name == 'metrics-server'
+      - __metrics_server_source_api_service.spec.service.namespace == 'kube-system'
+    fail_msg: >-
+      A transform-sensitive Deployment, Service, or APIService field changed in
+      the upstream Metrics Server manifest. Review the release instead of
+      applying assumptions from the prior shape.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Build the desired Metrics Server container
+  ansible.builtin.set_fact:
+    __metrics_server_desired_container: >-
+      {{ __metrics_server_source_container | combine({
+           'args': __metrics_server_container_args,
+           'image': __metrics_server_image,
+           'ports': [{
+             'containerPort': metrics_server_secure_port | int,
+             'hostPort': metrics_server_secure_port | int,
+             'name': 'https',
+             'protocol': 'TCP'
+           }],
+           'resources': __metrics_server_resources
+         }) }}
+  run_once: true
+
+- name: Build the desired worker host-network pod specification
+  ansible.builtin.set_fact:
+    __metrics_server_desired_pod_spec: >-
+      {{ __metrics_server_source_deployment.spec.template.spec | combine({
+           'containers': [__metrics_server_desired_container],
+           'dnsPolicy': 'ClusterFirstWithHostNet',
+           'hostNetwork': true,
+           'nodeSelector': {
+             'kubernetes.io/os': 'linux',
+             'node-role.kubernetes.io/worker': 'worker'
+           }
+         }) }}
+  run_once: true
+
+- name: Build the desired Metrics Server pod template
+  ansible.builtin.set_fact:
+    __metrics_server_desired_template: >-
+      {{ __metrics_server_source_deployment.spec.template | combine({
+           'metadata': __metrics_server_source_deployment.spec.template.metadata
+             | combine({
+                 'annotations': (
+                   __metrics_server_source_deployment.spec.template.metadata.annotations
+                   | default({})
+                 ) | combine(__metrics_server_template_annotations)
+               }),
+           'spec': __metrics_server_desired_pod_spec
+         }) }}
+  run_once: true
+
+- name: Build the desired Metrics Server Deployment
+  ansible.builtin.set_fact:
+    __metrics_server_desired_deployment: >-
+      {{ __metrics_server_source_deployment | combine({
+           'metadata': __metrics_server_source_deployment.metadata | combine({
+             'annotations': (
+               __metrics_server_source_deployment.metadata.annotations
+               | default({})
+             ) | combine(__metrics_server_managed_annotations)
+           }),
+           'spec': __metrics_server_source_deployment.spec | combine({
+             'replicas': 1,
+             'template': __metrics_server_desired_template
+           })
+         }) }}
+  run_once: true
+
+- name: Build the desired Metrics Server Service
+  ansible.builtin.set_fact:
+    __metrics_server_desired_service: >-
+      {{ __metrics_server_source_service | combine({
+           'metadata': __metrics_server_source_service.metadata | combine({
+             'annotations': (
+               __metrics_server_source_service.metadata.annotations
+               | default({})
+             ) | combine(__metrics_server_managed_annotations)
+           }),
+           'spec': __metrics_server_source_service.spec | combine({
+             'ports': [{
+               'appProtocol': 'https',
+               'name': 'https',
+               'port': 443,
+               'protocol': 'TCP',
+               'targetPort': metrics_server_secure_port | int
+             }],
+             'type': 'ClusterIP'
+           })
+         }) }}
+  run_once: true
+
+- name: Build the desired Metrics Server APIService
+  ansible.builtin.set_fact:
+    __metrics_server_desired_api_service: >-
+      {{ __metrics_server_source_api_service | combine({
+           'metadata': __metrics_server_source_api_service.metadata | combine({
+             'annotations': (
+               __metrics_server_source_api_service.metadata.annotations
+               | default({})
+             ) | combine(__metrics_server_managed_annotations)
+           }),
+           'spec': __metrics_server_source_api_service.spec | combine({
+             'insecureSkipTLSVerify': true
+           })
+         }) }}
+  run_once: true
+
+- name: Reset the desired Metrics Server object list
+  ansible.builtin.set_fact:
+    __metrics_server_desired_objects: []
+  run_once: true
+
+- name: Assemble the desired Metrics Server object list
+  ansible.builtin.set_fact:
+    __metrics_server_desired_objects: >-
+      {{ __metrics_server_desired_objects + [
+           __metrics_server_desired_deployment
+           if item.kind == 'Deployment'
+           else __metrics_server_desired_service
+           if item.kind == 'Service'
+           else __metrics_server_desired_api_service
+           if item.kind == 'APIService'
+           else item | combine({
+             'metadata': item.metadata | combine({
+               'annotations': (item.metadata.annotations | default({}))
+                 | combine(__metrics_server_managed_annotations)
+             })
+           })
+         ] }}
+  loop: "{{ __metrics_server_source_objects }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+  run_once: true
+
+- name: Confirm the complete desired Metrics Server contract
+  ansible.builtin.assert:
+    that:
+      - __metrics_server_desired_objects | length == 9
+      - __metrics_server_desired_deployment.spec.replicas == 1
+      - __metrics_server_desired_container.image == __metrics_server_image
+      - __metrics_server_desired_container.args == __metrics_server_container_args
+      - >-
+        __metrics_server_desired_container.args
+        | select('equalto', '--kubelet-insecure-tls') | list | length == 1
+      - >-
+        __metrics_server_desired_container.ports[0].containerPort
+        == metrics_server_secure_port | int
+      - >-
+        __metrics_server_desired_container.ports[0].hostPort
+        == metrics_server_secure_port | int
+      - __metrics_server_desired_container.resources == __metrics_server_resources
+      - __metrics_server_desired_pod_spec.hostNetwork | bool
+      - __metrics_server_desired_pod_spec.dnsPolicy == 'ClusterFirstWithHostNet'
+      - >-
+        __metrics_server_desired_pod_spec.nodeSelector
+        == {
+             'kubernetes.io/os': 'linux',
+             'node-role.kubernetes.io/worker': 'worker'
+           }
+      - __metrics_server_desired_pod_spec.tolerations | default([]) | length == 0
+      - >-
+        __metrics_server_desired_service.spec.ports[0].targetPort
+        == metrics_server_secure_port | int
+      - __metrics_server_desired_service.spec.type == 'ClusterIP'
+      - __metrics_server_desired_api_service.spec.insecureSkipTLSVerify | bool
+    fail_msg: >-
+      The parsed transformation did not produce the complete pinned image,
+      worker-only host-network, port, resource, or TLS contract.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Confirm every desired object carries both ownership markers
+  ansible.builtin.assert:
+    that:
+      - >-
+        item.metadata.annotations[__metrics_server_owner_annotation]
+        == __metrics_server_owner_value
+      - >-
+        item.metadata.annotations[__metrics_server_manifest_annotation]
+        == metrics_server_manifest_sha256
+    fail_msg: >-
+      {{ item.kind }}/{{ item.metadata.name }} is missing the Metrics Server
+      ownership or source-checksum annotation.
+    quiet: true
+  loop: "{{ __metrics_server_desired_objects }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+  delegate_to: localhost
+  run_once: true

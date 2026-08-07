@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Infrastructure-as-code for a 3-node Kubernetes homelab (3× Dell OptiPlex 7050, Ubuntu 26.04 LTS "resolute"). Uses Ansible for machine provisioning and kubeadm for cluster bootstrap. **Ansible owns the machines; Argo CD (not yet implemented) will own everything inside the cluster.**
+Infrastructure-as-code for a 3-node Kubernetes homelab (3× Dell OptiPlex 7050, Ubuntu 26.04 LTS "resolute"). Uses Ansible for machine provisioning and kubeadm for cluster bootstrap. **Ansible currently owns the machines and a small pre-Argo platform layer. Argo CD (not yet implemented) will later adopt in-cluster ownership atomically; two controllers must never reconcile the same object.**
 
 ## Commands
 
@@ -18,7 +18,8 @@ make test       # molecule test -s hardening (needs Docker; touches no node)
 make ping       # verify SSH to all nodes
 make nodes      # ansible-playbook site.yml (configure nodes, idempotent)
 make cluster    # ansible-playbook cluster.yml (kubeadm init + CNI + join workers)
-make platform   # ansible-playbook platform.yml (MetalLB + Traefik bootstrap)
+make platform   # ansible-playbook platform.yml (MetalLB + Traefik + Metrics Server)
+make metrics    # reconcile Metrics Server and print current node CPU/memory
 make all        # nodes + cluster in one go
 make hosts      # print the /etc/hosts line THIS LAPTOP needs
 make status     # kubectl get nodes + pods using fetched kubeconfig
@@ -29,12 +30,13 @@ profile with an empty `skip_list`, and should stay that way. `make hooks` wires 
 same lint into a pre-commit hook alongside `gitleaks`; the hook is convenience,
 `make check` is the gate (hooks are bypassable with `--no-verify`).
 
-**`make test` is the only automated test.** It runs the `hardening` role verbatim
+**`make test` is the only Molecule test.** It runs the `hardening` role verbatim
 against an Ubuntu 26.04 container with real systemd as PID 1 — no mocked handlers —
 then checks idempotency and asserts on the resulting sshd/apt/ufw state. Only
 `hardening` has a scenario: the other roles need a real kernel (swap, modprobe,
-sysctls) or a live API server, so a container would prove nothing. If you add a
-scenario, put it in `ansible/molecule/<name>/`, **not** inside the role — a
+sysctls) or a live API server, so a container would prove nothing. `make check`
+also runs controller-only safety and transformation tests for platform roles. If
+you add a scenario, put it in `ansible/molecule/<name>/`, **not** inside the role — a
 scenario nested in a role makes molecule demand a `galaxy_info` block with a
 Galaxy namespace, which these roles deliberately do not have.
 
@@ -64,7 +66,7 @@ make cluster
 ### Three-playbook design
 - **`site.yml`** — idempotent node configuration. Re-run freely. Applies roles: `base` → `hardening` → `kubernetes_node`. Gets all nodes to an identical kubeadm-ready state.
 - **`cluster.yml`** — one-time cluster bootstrap. Runs `control_plane` role on the CP node, then `worker` role on workers. Safe to re-run (skips init/join if already done via stat checks on `/etc/kubernetes/admin.conf` and `/etc/kubernetes/kubelet.conf`).
-- **`platform.yml`** — minimal pre-Argo bootstrap for cluster services. It installs checksum-pinned native-mode MetalLB, then digest-pinned Traefik at `192.168.178.240`; the MetalLB `.240-.250` pool sits above the router's confirmed `.20-.200` DHCP range.
+- **`platform.yml`** — minimal pre-Argo bootstrap for cluster services. It installs checksum-pinned native-mode MetalLB, digest-pinned Traefik at `192.168.178.240`, then checksum/image-pinned Metrics Server for current resource metrics. The MetalLB `.240-.250` pool sits above the router's confirmed `.20-.200` DHCP range.
 
 ### Ansible roles (`ansible/roles/`)
 Order in `site.yml` matters — see the note under `automation_user`.
@@ -80,6 +82,7 @@ Order in `site.yml` matters — see the note under `automation_user`.
 | `worker` | join cluster using token from control_plane, wait for registration, label node |
 | `metallb` | checksum-pinned native manifest, digest-pinned images, Layer 2 address-pool safety gate |
 | `traefik` | digest-pinned Helm release, standard Ingress only, fixed MetalLB address |
+| `metrics_server` | checksum-pinned parsed manifest, digest-pinned image, worker-only current CPU/memory API |
 
 `automation_user` **must** run before `hardening`: the account has to exist and be
 listed in sshd's `AllowUsers` before `hardening` reloads sshd.
@@ -130,7 +133,7 @@ is a deliberate 4-step rollout documented in `group_vars/all.yml`.
 - Handlers live in each role's `handlers/main.yml` — hardening has `Reload sshd`/`Reload ufw`; kubernetes_node has `Reload sysctl`/`Restart containerd`/`Restart kubelet`
 - The kubeconfig is fetched to `ansible/kubeconfig` (gitignored)
 - `autoinstall/user-data` contains secrets and is gitignored; only `user-data.example` is tracked
-- Versions **and their sha256 digests** are pinned together in `group_vars/all.yml`. The two apt signing keys and MetalLB native manifest are checksum-verified; Cilium and MetalLB runtime images use immutable digests. Never weaken those checks. Regenerate key or manifest digests with `curl -fsSL <url> | sha256sum`, and obtain the Cilium chart digest with `helm pull oci://quay.io/cilium/charts/cilium --version <version>`. The k8s `Release.key` digest is stable across minor bumps.
+- Versions **and their sha256 digests** are pinned together in `group_vars/all.yml`. The two apt signing keys plus MetalLB and Metrics Server manifests are checksum-verified; Cilium, MetalLB, Traefik, and Metrics Server runtime images use immutable digests. Never weaken those checks. Regenerate key or manifest digests with `curl -fsSL <url> | sha256sum`, and obtain the Cilium chart digest with `helm pull oci://quay.io/cilium/charts/cilium --version <version>`. The k8s `Release.key` digest is stable across minor bumps.
 - Anything writing to `/etc/sudoers.d/` must use `validate: visudo -cf %s` — a malformed file makes `sudo` unusable on every node at once
 - Any task whose command line or output carries a secret gets `no_log: true`. Prefer removing the secret instead where possible (e.g. `kubeadm init --skip-token-print`), since `no_log` censors failures too
 - **Variable naming is enforced by lint, not convention.** Registered and `set_fact` variables are `__<role>_`-prefixed (internal); role defaults are `<role>_`-prefixed. The one intentional exception is `control_plane_join_command`, a published output of `control_plane` read by `worker` through `hostvars` — interface, not internal. Ansible has no namespaces and `site.yml` runs all five node roles in a single play, so they share one namespace for the whole run.

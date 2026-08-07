@@ -1,0 +1,9 @@
+---
+# kubectl diff uses 0 for exact state and 1 for drift. Isolating this mapping
+# makes the mutation decision directly testable without a live API server.
+
+- name: Record whether Metrics Server needs reconciliation
+  ansible.builtin.set_fact:
+    __metrics_server_needs_reconcile: >-
+      {{ __metrics_server_manifest_diff.rc == 1 }}
+  run_once: true

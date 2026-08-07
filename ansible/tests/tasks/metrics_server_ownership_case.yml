@@ -1,0 +1,29 @@
+---
+- name: Reset ownership outcome for {{ metrics_server_ownership_case.name }}
+  ansible.builtin.set_fact:
+    __metrics_server_ownership_rejected: false
+
+- name: Exercise ownership state for {{ metrics_server_ownership_case.name }}
+  block:
+    - name: Run only the Metrics Server ownership tasks
+      ansible.builtin.include_role:
+        name: metrics_server
+        tasks_from: ownership_state
+      vars:
+        __metrics_server_existing_resources_raw:
+          results: "{{ metrics_server_ownership_case.results }}"
+  rescue:
+    - name: Record that ownership evaluation rejected this case
+      ansible.builtin.set_fact:
+        __metrics_server_ownership_rejected: true
+
+- name: Ownership outcome must match for {{ metrics_server_ownership_case.name }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        __metrics_server_ownership_rejected | bool
+        == metrics_server_ownership_case.expect_rejected | bool
+    fail_msg: >-
+      {{ metrics_server_ownership_case.name }} produced the wrong ownership
+      decision.
+    quiet: true

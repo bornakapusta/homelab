@@ -1,0 +1,3 @@
+{{ __metrics_server_desired_objects
+   | map('to_nice_yaml', indent=2, sort_keys=false)
+   | join('---\n') }}
