@@ -154,14 +154,21 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
-  # The chart generates a random admin password on every render. Without this,
-  # every sync would rotate it and the app would never settle in Synced.
+  # The chart generates a random admin password on every render, and stamps a
+  # checksum of that Secret onto the Grafana pod template. Without both
+  # entries, every sync would rotate the password and roll Grafana, and the app
+  # would never settle in Synced.
   ignoreDifferences:
     - group: ""
       kind: Secret
       name: kube-prometheus-stack-grafana
       jsonPointers:
         - /data
+    - group: apps
+      kind: Deployment
+      name: kube-prometheus-stack-grafana
+      jsonPointers:
+        - /spec/template/metadata/annotations/checksum~1secret
   syncPolicy:
     automated:
       prune: true
