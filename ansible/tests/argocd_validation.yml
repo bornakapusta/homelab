@@ -147,7 +147,8 @@
           - __argocd_image is search('@sha256:[0-9a-f]{64}$')
           - __argocd_redis_image == 'ecr-public.aws.com/docker/library/redis:8.6.4-alpine@sha256:' ~ argocd_validation_digest
           - __argocd_root_application.metadata.finalizers is not defined
-          - __argocd_root_application.spec.source.directory.recurse == false
+          # Absent = non-recursive (Argo CD's default); see vars/main.yml.
+          - __argocd_root_application.spec.source.directory is not defined
           - __argocd_root_application.spec.syncPolicy.automated.prune == true
           - __argocd_root_application.spec.syncPolicy.automated.selfHeal == true
           - __argocd_root_application.spec.source.path == 'clusters/home/apps'

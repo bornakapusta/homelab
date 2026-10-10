@@ -92,8 +92,9 @@ __argocd_root_application:
       repoURL: "{{ argocd_root_repo_url }}"
       targetRevision: "{{ argocd_root_revision }}"
       path: "{{ argocd_root_path }}"
-      directory:
-        recurse: false
+      # No `directory: {recurse: false}`: non-recursive is already the default,
+      # and Argo CD strips default-valued fields from the stored spec, so
+      # writing it here made every apply report `configured`.
     destination:
       server: https://kubernetes.default.svc
       namespace: "{{ __argocd_namespace }}"
