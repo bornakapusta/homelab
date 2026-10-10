@@ -8,6 +8,18 @@ origin: docs/brainstorms/2026-08-06-node-metrics-dashboard-requirements.md
 
 # ✨ feat: Node metrics dashboard and GitOps platform bootstrap
 
+> ## ⚠️ UPDATE — 2026-10-10
+>
+> Argo CD now exists (`ansible/roles/argocd`, installed by `platform.yml`), so
+> the 2026-08-07 correction below is itself superseded for **new** components:
+> kube-prometheus-stack ships as an Argo CD Application
+> (`clusters/home/apps/kube-prometheus-stack.yaml`), not a
+> `kube_prometheus_stack` Ansible role. Existing Ansible-owned components
+> (MetalLB, Traefik, Metrics Server, local-path) stay Ansible-owned until a
+> separate atomic adoption. First round is dashboards only: Alertmanager and
+> ntfy are deferred. Prometheus runs with hostNetwork on node-3 so scrapes come
+> from a trusted node IP.
+
 > ## ⚠️ CORRECTION — 2026-08-07
 >
 > **This plan was written against `master`, which was 7 commits behind `main`.**

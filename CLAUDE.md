@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Infrastructure-as-code for a 3-node Kubernetes homelab (3× Dell OptiPlex 7050, Ubuntu 26.04 LTS "resolute"). Uses Ansible for machine provisioning and kubeadm for cluster bootstrap. **Ansible currently owns the machines and a small pre-Argo platform layer. Argo CD (not yet implemented) will later adopt in-cluster ownership atomically; two controllers must never reconcile the same object.**
+Infrastructure-as-code for a 3-node Kubernetes homelab (3× Dell OptiPlex 7050, Ubuntu 26.04 LTS "resolute"). Uses Ansible for machine provisioning and kubeadm for cluster bootstrap. **Ansible owns the machines, a small bootstrap platform layer, and Argo CD itself. Argo CD owns everything declared under `clusters/home/` (cert-manager, Rancher, kube-prometheus-stack). Two controllers must never reconcile the same object: moving an Ansible-owned component into Argo CD is one atomic change that adds the Application and deletes the role.**
 
 ## Commands
 
@@ -18,10 +18,12 @@ make test       # molecule test -s hardening (needs Docker; touches no node)
 make ping       # verify SSH to all nodes
 make nodes      # ansible-playbook site.yml (configure nodes, idempotent)
 make cluster    # ansible-playbook cluster.yml (kubeadm init + CNI + join workers)
-make platform   # ansible-playbook platform.yml (MetalLB + Traefik + Metrics Server)
+make platform   # ansible-playbook platform.yml (MetalLB + Traefik + local-path + Metrics Server + Argo CD)
 make metrics    # reconcile Metrics Server and print current node CPU/memory
+make storage    # reconcile local-path-provisioner (default StorageClass)
+make argocd     # reconcile Argo CD and its homelab-root app-of-apps
 make all        # nodes + cluster in one go
-make hosts      # print the /etc/hosts line THIS LAPTOP needs
+make hosts      # print the /etc/hosts lines THIS LAPTOP needs (API + web UIs)
 make status     # kubectl get nodes + pods using fetched kubeconfig
 ```
 
@@ -66,7 +68,20 @@ make cluster
 ### Three-playbook design
 - **`site.yml`** — idempotent node configuration. Re-run freely. Applies roles: `base` → `hardening` → `kubernetes_node`. Gets all nodes to an identical kubeadm-ready state.
 - **`cluster.yml`** — one-time cluster bootstrap. Runs `control_plane` role on the CP node, then `worker` role on workers. Safe to re-run (skips init/join if already done via stat checks on `/etc/kubernetes/admin.conf` and `/etc/kubernetes/kubelet.conf`).
-- **`platform.yml`** — minimal pre-Argo bootstrap for cluster services. It installs checksum-pinned native-mode MetalLB, digest-pinned Traefik at `192.168.178.240`, then checksum/image-pinned Metrics Server for current resource metrics. The MetalLB `.240-.250` pool sits above the router's confirmed `.20-.200` DHCP range.
+- **`platform.yml`** — bootstrap for cluster services. It installs checksum-pinned native-mode MetalLB, digest-pinned Traefik at `192.168.178.240`, local-path-provisioner (default StorageClass), checksum/image-pinned Metrics Server, and finally digest-pinned Argo CD plus the `homelab-root` Application. The MetalLB `.240-.250` pool sits above the router's confirmed `.20-.200` DHCP range.
+
+### GitOps layer (`clusters/home/`)
+`homelab-root` (applied by the `argocd` role) watches `clusters/home/apps/` on `main` of the public GitHub repo, with automated sync + prune + selfHeal. Each file there is one Argo CD `Application` wrapping a Helm chart with an exact `targetRevision` and digest-pinned images in `valuesObject`. **Changes reach the cluster by pushing to `main`, not by running Ansible.**
+
+| App | Namespace | Notes |
+|---|---|---|
+| `cert-manager` | `cert-manager` | wave 0; issues Rancher's TLS cert |
+| `rancher` | `cattle-system` | wave 1; `rancher.home.arpa`; 2.15.x is the first line certified for k8s 1.36 |
+| `kube-prometheus-stack` | `monitoring` | wave 1; `grafana.home.arpa`; Prometheus hostNetwork on `monitoring_host` (node-3), 15d/15GB retention, Alertmanager off |
+
+**Rancher is read-only for anything Ansible or Argo CD owns.** Its UI can edit any object; such an edit is either reverted by selfHeal or silently drifts from git. Its bundled Fleet stays idle (no `GitRepo` objects). Initial passwords for Argo CD, Rancher and Grafana are generated in-cluster, never committed; each app/role README says how to read them.
+
+`monitoring_host` in `group_vars/all.yml` is repeated as a nodeSelector in `kube-prometheus-stack.yaml` (Argo CD cannot read Ansible vars) — change both together. Because Prometheus uses hostNetwork, its scrapes come from a trusted node IP; `hardening` opens only `9090` to the Pod CIDR on that host, for Grafana.
 
 ### Ansible roles (`ansible/roles/`)
 Order in `site.yml` matters — see the note under `automation_user`.
@@ -83,6 +98,8 @@ Order in `site.yml` matters — see the note under `automation_user`.
 | `metallb` | checksum-pinned native manifest, digest-pinned images, Layer 2 address-pool safety gate |
 | `traefik` | digest-pinned Helm release, standard Ingress only, fixed MetalLB address |
 | `metrics_server` | checksum-pinned parsed manifest, digest-pinned image, worker-only current CPU/memory API |
+| `local_path_provisioner` | checksum-pinned manifest, digest-pinned images, workers-only default StorageClass |
+| `argocd` | digest-pinned Helm release, `argocd.home.arpa`, applies the `homelab-root` app-of-apps |
 
 `automation_user` **must** run before `hardening`: the account has to exist and be
 listed in sshd's `AllowUsers` before `hardening` reloads sshd.
@@ -142,7 +159,7 @@ is a deliberate 4-step rollout documented in `group_vars/all.yml`.
 
 ## Not yet implemented
 
-`clusters/` (Argo CD app-of-apps), `images/` (agent sandbox image), HA control plane (kube-vip). See `docs/PROJECT-PLAN.md` for the roadmap.
+Argo CD adoption of the Ansible-owned platform components, Alertmanager + ntfy alerts, trusted TLS/local DNS (Phase 2.75), `images/` (agent sandbox image), HA control plane (kube-vip). See `docs/PROJECT-PLAN.md` for the roadmap.
 
 <!-- OPENWIKI:START -->
 

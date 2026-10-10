@@ -2,14 +2,25 @@
 
 Infrastructure-as-code for a 3× Dell OptiPlex 7050 Kubernetes homelab.
 
-**Division of labour:** Ansible owns the machines, kubeadm bootstrap, and the
-small pre-Argo platform layer. Argo CD will later adopt in-cluster ownership;
-the same object must never be reconciled by both at once.
+**Division of labour:** Ansible owns the machines, kubeadm bootstrap, a small
+bootstrap platform layer, and Argo CD itself. Argo CD owns everything declared
+under `clusters/home/` (cert-manager, Rancher, Prometheus/Grafana). The same
+object must never be reconciled by both at once.
+
+| UI | URL | Login |
+|---|---|---|
+| Argo CD | https://argocd.home.arpa | `admin` + generated password ([how](#step-4--gitops-apps-rancher-grafana)) |
+| Rancher | https://rancher.home.arpa | generated bootstrap password, then set your own |
+| Grafana | https://grafana.home.arpa | `admin` + generated password |
+
+All three sit behind Traefik at `192.168.178.240`. Run `make hosts` for the
+`/etc/hosts` line your laptop needs until local DNS serves `*.home.arpa`.
+Certificates are self-signed for now, so expect a browser warning.
 
 ```
 autoinstall/   cloud-init file to install Ubuntu identically on every node
 ansible/       node config + kubeadm cluster bootstrap
-clusters/      (later) Argo CD app-of-apps — platform + your apps
+clusters/      Argo CD app-of-apps — one Application per Helm chart
 images/        (later) the rails-dev sandbox image
 ```
 
@@ -84,10 +95,11 @@ kubectl get nodes -o wide
 
 All nodes should reach `Ready` within a minute or two of Cilium starting.
 
-## Step 3 — Install the first platform services
+## Step 3 — Install the bootstrap platform services
 
-Until Argo CD exists, a small bootstrap playbook installs pinned MetalLB, a
-minimal Traefik ingress controller, and Metrics Server for current CPU/memory:
+A small bootstrap playbook installs pinned MetalLB, a minimal Traefik ingress
+controller, local-path-provisioner (the default StorageClass), Metrics Server
+for current CPU/memory, and finally Argo CD:
 
 ```bash
 ansible-playbook platform.yml
@@ -124,8 +136,59 @@ make metrics
 ```
 
 The worker host-network and temporary TLS-verification tradeoffs are documented
-in `ansible/roles/metrics_server/README.md`. Prometheus, Grafana, retained
-history, dashboards, disk/network metrics, alerts, and logs remain later work.
+in `ansible/roles/metrics_server/README.md`.
+
+local-path-provisioner gives PersistentVolumeClaims a home: volumes are
+directories under `/var/lib/local-path-provisioner` on **workers only** (never
+the control plane). A volume is tied to the node it was created on. See
+`ansible/roles/local_path_provisioner/README.md`.
+
+Argo CD is installed last, from its digest-pinned Helm chart, together with one
+root Application, `homelab-root`, that watches `clusters/home/apps/` on `main`.
+Reconcile only Argo CD with `make argocd`. See `ansible/roles/argocd/README.md`.
+
+## Step 4 — GitOps apps (Rancher, Grafana)
+
+Everything under `clusters/home/apps/` is deployed by Argo CD, not Ansible.
+Each file is one Argo CD `Application` wrapping an upstream **Helm chart** at an
+exact version, with images pinned by digest. **To change or add an app, edit or
+add a file there and push to `main`** — Argo CD syncs it within a few minutes.
+See [`clusters/README.md`](clusters/README.md) for the layout and an example.
+
+| App | What it gives you |
+|---|---|
+| `cert-manager` | issues Rancher's TLS certificate |
+| `rancher` | web UI to browse and inspect the cluster |
+| `kube-prometheus-stack` | Prometheus + Grafana: CPU, memory, disk, network and temperatures per node, 15 days of history |
+
+Argo-managed charts are rendered by Argo CD, so they do **not** appear in
+`helm list`; check them with `kubectl -n argocd get applications` or the Argo CD
+UI. Never `helm upgrade` them by hand.
+
+First logins (passwords are generated in-cluster, never committed):
+
+```bash
+export KUBECONFIG=$PWD/ansible/kubeconfig
+
+# Argo CD (user: admin)
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath='{.data.password}' | base64 -d; echo
+
+# Rancher bootstrap password (Rancher then asks you to set your own)
+kubectl -n cattle-system get secret bootstrap-secret \
+  -o go-template='{{.data.bootstrapPassword|base64decode}}{{"\n"}}'
+
+# Grafana (user: admin)
+kubectl -n monitoring get secret kube-prometheus-stack-grafana \
+  -o go-template='{{index .data "admin-password"|base64decode}}{{"\n"}}'
+```
+
+In Grafana, open **Dashboards → Node Exporter / Nodes** for per-server
+resources, or **Kubernetes / Compute Resources / Node** for per-pod usage.
+
+**Treat Rancher as read-only** for anything Ansible or Argo CD manages. An edit
+made in its UI is either reverted by Argo CD's self-heal or silently drifts from
+git. Rancher's bundled Fleet stays unused.
 
 ---
 
@@ -150,14 +213,24 @@ traffic between your node IPs. This includes Cilium's VXLAN (`8472/udp`) and hea
 traffic (`4240/tcp` and ICMP). Without that peer trust, pod networking breaks in
 confusing ways.
 
-**Versions:** `group_vars/all.yml` pins Kubernetes, Cilium, MetalLB, Traefik, and
-Metrics Server. Check current releases and their matching digests before a bump.
+**Prometheus lives on node-3.** Prometheus, Grafana and the operator are pinned to
+`monitoring_host` (node-3) and Prometheus' volume is bound there. Prometheus uses
+the host network so its scrapes come from a node IP that ufw already trusts; the
+only extra firewall rule lets Grafana reach port `9090` on node-3.
+
+**Versions:** `group_vars/all.yml` pins Kubernetes, Cilium, MetalLB, Traefik,
+local-path-provisioner, Metrics Server and Argo CD; the GitOps charts are pinned
+in their files under `clusters/home/apps/`. Check current releases and their
+matching digests before a bump. Rancher's chart caps the Kubernetes version
+(2.15.x: `< 1.37`), so check the Rancher support matrix before bumping Kubernetes.
 
 ---
 
 ## Not included yet
 
-- `clusters/` — Argo CD ownership, cert-manager, full Prometheus/Grafana monitoring, Agent Sandbox
+- Alertmanager + phone alerts (ntfy), trusted TLS and local DNS for `*.home.arpa`
+- Moving MetalLB, Traefik, local-path and Metrics Server from Ansible into Argo CD
+- Agent Sandbox
 - `images/rails-dev/` — the agent sandbox image
 - HA control plane (kube-vip)
 
@@ -172,3 +245,7 @@ These come after you have a working cluster. See `PROJECT-PLAN.md` for the full 
 | Pods can't reach each other | ufw forward policy, or pod CIDR clashing with your LAN |
 | `kubectl top` is unavailable or misses a node | Inspect the Metrics APIService, Metrics Server logs, and kubelet reachability; see the role README |
 | Installer can't see the disk | BIOS `SATA Operation` set to RAID — change to **AHCI** |
+| `*.home.arpa` doesn't open in the browser | Missing `/etc/hosts` line — run `make hosts` |
+| An Argo CD app is `OutOfSync`/`Degraded` | `kubectl -n argocd get applications`, then open the app in the Argo CD UI for the failing resource |
+| Grafana shows "No data" | Prometheus targets: `kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090` → http://localhost:9090/targets |
+| A PVC stays `Pending` | Normal until a pod uses it (`WaitForFirstConsumer`); otherwise check `kubectl -n local-path-storage logs deploy/local-path-provisioner` |
