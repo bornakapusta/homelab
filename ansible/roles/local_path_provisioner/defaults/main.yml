@@ -1,0 +1,7 @@
+---
+# Safe structural defaults. Release pins, the data path, and the hostPath
+# acknowledgement are operator-owned and live in group_vars/all.yml.
+
+local_path_provisioner_kubeconfig: "{{ playbook_dir }}/kubeconfig"
+local_path_provisioner_cluster_hosts: "{{ cluster_hosts }}"
+local_path_provisioner_worker_hosts: "{{ worker_hosts }}"

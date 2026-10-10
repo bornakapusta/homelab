@@ -1,0 +1,11 @@
+---
+# Safe structural defaults. Release pins and the GitOps repository URL are
+# operator-owned settings in group_vars/all.yml.
+
+argocd_release_name: argocd
+argocd_hostname: argocd.home.arpa
+argocd_ingress_class_name: traefik
+argocd_root_app_name: homelab-root
+argocd_root_revision: main
+argocd_root_path: clusters/home/apps
+argocd_kubeconfig: "{{ playbook_dir }}/kubeconfig"

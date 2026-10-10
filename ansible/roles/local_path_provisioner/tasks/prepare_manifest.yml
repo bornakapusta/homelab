@@ -1,0 +1,342 @@
+---
+# Parse and transform the upstream YAML as objects. Tests can seed
+# __local_path_provisioner_source_objects directly; the live role supplies the
+# decoded checksum-verified manifest in
+# __local_path_provisioner_source_manifest_content.
+
+- name: Parse the local-path-provisioner source manifest
+  ansible.builtin.set_fact:
+    __local_path_provisioner_source_objects: >-
+      {{ __local_path_provisioner_source_manifest_content | from_yaml_all | list }}
+  when: __local_path_provisioner_source_objects is not defined
+  run_once: true
+
+- name: Confirm the source manifest has the expected document count
+  ansible.builtin.assert:
+    that:
+      - __local_path_provisioner_source_objects is sequence
+      - >-
+        __local_path_provisioner_source_objects | length
+        == __local_path_provisioner_expected_resource_keys | length
+    fail_msg: >-
+      The upstream local-path-provisioner manifest no longer contains the
+      expected nine objects. Review the upstream release before changing this
+      role.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Confirm each source document is a named Kubernetes object
+  ansible.builtin.assert:
+    that:
+      - item is mapping
+      - item.apiVersion is string
+      - item.kind is string
+      - item.metadata is mapping
+      - item.metadata.name is string
+    fail_msg: >-
+      The local-path-provisioner source manifest contains an unexpected
+      document. Refusing to render or apply a partial object set.
+    quiet: true
+  loop: "{{ __local_path_provisioner_source_objects }}"
+  loop_control:
+    label: "{{ item.kind | default('unknown') }}/{{ item.metadata.name | default('unknown') }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Reset the source resource-key inventory
+  ansible.builtin.set_fact:
+    __local_path_provisioner_source_resource_keys: []
+  run_once: true
+
+- name: Inventory the source resource keys
+  ansible.builtin.set_fact:
+    __local_path_provisioner_source_resource_keys: >-
+      {{ __local_path_provisioner_source_resource_keys + [
+           item.apiVersion ~ '|' ~ item.kind ~ '|' ~
+           (item.metadata.namespace | default('_cluster')) ~ '|' ~
+           item.metadata.name
+         ] }}
+  loop: "{{ __local_path_provisioner_source_objects }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+  run_once: true
+
+- name: Confirm the exact upstream resource set
+  ansible.builtin.assert:
+    that:
+      - >-
+        __local_path_provisioner_source_resource_keys | sort
+        == __local_path_provisioner_expected_resource_keys | sort
+    fail_msg: >-
+      The local-path-provisioner release added, removed, renamed, or moved an
+      object. Review the new upstream manifest instead of applying an
+      incomplete set.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Select source objects that receive homelab transformations
+  ansible.builtin.set_fact:
+    __local_path_provisioner_source_deployment: >-
+      {{ __local_path_provisioner_source_objects
+         | selectattr('kind', 'equalto', 'Deployment') | first }}
+    __local_path_provisioner_source_storage_class: >-
+      {{ __local_path_provisioner_source_objects
+         | selectattr('kind', 'equalto', 'StorageClass') | first }}
+    __local_path_provisioner_source_config_map: >-
+      {{ __local_path_provisioner_source_objects
+         | selectattr('kind', 'equalto', 'ConfigMap') | first }}
+  run_once: true
+
+- name: Confirm the ConfigMap carries every upstream key
+  ansible.builtin.assert:
+    that:
+      - __local_path_provisioner_source_config_map.data is mapping
+      - >-
+        __local_path_provisioner_source_config_map.data.keys() | sort
+        == ['config.json', 'helperPod.yaml', 'setup', 'teardown']
+    fail_msg: >-
+      The upstream local-path-config ConfigMap no longer has exactly the
+      config.json, helperPod.yaml, setup, and teardown keys.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Parse the embedded provisioner config and helper pod
+  ansible.builtin.set_fact:
+    __local_path_provisioner_source_container: >-
+      {{ __local_path_provisioner_source_deployment.spec.template.spec.containers
+         | first }}
+    __local_path_provisioner_source_config: >-
+      {{ __local_path_provisioner_source_config_map.data['config.json']
+         | from_json }}
+    __local_path_provisioner_source_helper_pod: >-
+      {{ __local_path_provisioner_source_config_map.data['helperPod.yaml']
+         | from_yaml }}
+  run_once: true
+
+- name: Confirm the transform-sensitive upstream shape
+  ansible.builtin.assert:
+    that:
+      - __local_path_provisioner_source_deployment.spec.replicas == 1
+      - >-
+        __local_path_provisioner_source_deployment.spec.template.spec.containers
+        | length == 1
+      - __local_path_provisioner_source_container.name == 'local-path-provisioner'
+      - >-
+        __local_path_provisioner_source_container.image
+        == __local_path_provisioner_upstream_image
+      - >-
+        __local_path_provisioner_source_container.command
+        == __local_path_provisioner_upstream_command
+      - >-
+        __local_path_provisioner_source_storage_class.provisioner
+        == 'rancher.io/local-path'
+      - >-
+        __local_path_provisioner_source_storage_class.volumeBindingMode
+        == 'WaitForFirstConsumer'
+      - __local_path_provisioner_source_storage_class.reclaimPolicy == 'Delete'
+      - >-
+        __local_path_provisioner_source_config
+        == {'nodePathMap': [{
+             'node': 'DEFAULT_PATH_FOR_NON_LISTED_NODES',
+             'paths': [__local_path_provisioner_upstream_default_path]
+           }]}
+      - __local_path_provisioner_source_helper_pod.kind == 'Pod'
+      - __local_path_provisioner_source_helper_pod.spec.containers | length == 1
+      - >-
+        __local_path_provisioner_source_helper_pod.spec.containers[0].image
+        == __local_path_provisioner_upstream_helper_image
+    fail_msg: >-
+      A transform-sensitive Deployment, StorageClass, provisioner config, or
+      helper-pod field changed in the upstream local-path-provisioner
+      manifest. Review the release instead of applying assumptions from the
+      prior shape.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+# One entry per worker and no DEFAULT_PATH_FOR_NON_LISTED_NODES entry: the
+# provisioner refuses to create a volume on any node it is not told about, so
+# the control-plane node (etcd's disk) can never receive a PV.
+- name: Reset the worker-only node path map
+  ansible.builtin.set_fact:
+    __local_path_provisioner_node_path_map: []
+  run_once: true
+
+- name: Build the worker-only node path map
+  ansible.builtin.set_fact:
+    __local_path_provisioner_node_path_map: >-
+      {{ __local_path_provisioner_node_path_map + [{
+           'node': item,
+           'paths': [local_path_provisioner_data_path]
+         }] }}
+  loop: "{{ local_path_provisioner_worker_hosts | sort }}"
+  run_once: true
+
+- name: Build the desired provisioner container and helper pod
+  ansible.builtin.set_fact:
+    __local_path_provisioner_desired_container: >-
+      {{ __local_path_provisioner_source_container
+         | combine({'image': __local_path_provisioner_image}) }}
+    __local_path_provisioner_desired_helper_pod: >-
+      {{ __local_path_provisioner_source_helper_pod | combine({
+           'spec': __local_path_provisioner_source_helper_pod.spec | combine({
+             'containers': [
+               __local_path_provisioner_source_helper_pod.spec.containers[0]
+               | combine({'image': __local_path_provisioner_helper_image})
+             ]
+           })
+         }) }}
+  run_once: true
+
+- name: Build the desired provisioner Deployment
+  ansible.builtin.set_fact:
+    __local_path_provisioner_desired_deployment: >-
+      {{ __local_path_provisioner_source_deployment | combine({
+           'metadata': __local_path_provisioner_source_deployment.metadata
+             | combine({
+                 'annotations': (
+                   __local_path_provisioner_source_deployment.metadata.annotations
+                   | default({})
+                 ) | combine(__local_path_provisioner_managed_annotations)
+               }),
+           'spec': __local_path_provisioner_source_deployment.spec | combine({
+             'template': __local_path_provisioner_source_deployment.spec.template
+               | combine({
+                   'metadata':
+                     __local_path_provisioner_source_deployment.spec.template.metadata
+                     | combine({
+                         'annotations': (
+                           __local_path_provisioner_source_deployment.spec.template.metadata.annotations
+                           | default({})
+                         ) | combine(__local_path_provisioner_template_annotations)
+                       }),
+                   'spec':
+                     __local_path_provisioner_source_deployment.spec.template.spec
+                     | combine({
+                         'containers': [__local_path_provisioner_desired_container]
+                       })
+                 })
+           })
+         }) }}
+  run_once: true
+
+- name: Build the desired default StorageClass
+  ansible.builtin.set_fact:
+    __local_path_provisioner_desired_storage_class: >-
+      {{ __local_path_provisioner_source_storage_class | combine({
+           'metadata': __local_path_provisioner_source_storage_class.metadata
+             | combine({
+                 'annotations': (
+                   __local_path_provisioner_source_storage_class.metadata.annotations
+                   | default({})
+                 ) | combine(__local_path_provisioner_managed_annotations)
+                   | combine({
+                       __local_path_provisioner_default_class_annotation: 'true'
+                     })
+               })
+         }) }}
+  run_once: true
+
+- name: Build the desired provisioner ConfigMap
+  ansible.builtin.set_fact:
+    __local_path_provisioner_desired_config_map: >-
+      {{ __local_path_provisioner_source_config_map | combine({
+           'metadata': __local_path_provisioner_source_config_map.metadata
+             | combine({
+                 'annotations': (
+                   __local_path_provisioner_source_config_map.metadata.annotations
+                   | default({})
+                 ) | combine(__local_path_provisioner_managed_annotations)
+               }),
+           'data': __local_path_provisioner_source_config_map.data | combine({
+             'config.json': {
+               'nodePathMap': __local_path_provisioner_node_path_map
+             } | to_nice_json(indent=2, sort_keys=true),
+             'helperPod.yaml': __local_path_provisioner_desired_helper_pod
+               | to_nice_yaml(indent=2, sort_keys=false)
+           })
+         }) }}
+  run_once: true
+
+- name: Reset the desired local-path-provisioner object list
+  ansible.builtin.set_fact:
+    __local_path_provisioner_desired_objects: []
+  run_once: true
+
+- name: Assemble the desired local-path-provisioner object list
+  ansible.builtin.set_fact:
+    __local_path_provisioner_desired_objects: >-
+      {{ __local_path_provisioner_desired_objects + [
+           __local_path_provisioner_desired_deployment
+           if item.kind == 'Deployment'
+           else __local_path_provisioner_desired_storage_class
+           if item.kind == 'StorageClass'
+           else __local_path_provisioner_desired_config_map
+           if item.kind == 'ConfigMap'
+           else item | combine({
+             'metadata': item.metadata | combine({
+               'annotations': (item.metadata.annotations | default({}))
+                 | combine(__local_path_provisioner_managed_annotations)
+             })
+           })
+         ] }}
+  loop: "{{ __local_path_provisioner_source_objects }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+  run_once: true
+
+- name: Confirm the complete desired local-path-provisioner contract
+  ansible.builtin.assert:
+    that:
+      - __local_path_provisioner_desired_objects | length == 9
+      - >-
+        __local_path_provisioner_desired_container.image
+        == __local_path_provisioner_image
+      - >-
+        (__local_path_provisioner_desired_config_map.data['helperPod.yaml']
+         | from_yaml).spec.containers[0].image
+        == __local_path_provisioner_helper_image
+      - >-
+        (__local_path_provisioner_desired_config_map.data['config.json']
+         | from_json).nodePathMap | map(attribute='node') | sort | list
+        == local_path_provisioner_worker_hosts | sort
+      - >-
+        (__local_path_provisioner_desired_config_map.data['config.json']
+         | from_json).nodePathMap | map(attribute='paths') | unique | list
+        == [[local_path_provisioner_data_path]]
+      - >-
+        __local_path_provisioner_desired_storage_class.metadata.annotations[
+          __local_path_provisioner_default_class_annotation
+        ] == 'true'
+      - >-
+        __local_path_provisioner_desired_storage_class.volumeBindingMode
+        == 'WaitForFirstConsumer'
+      - __local_path_provisioner_desired_storage_class.reclaimPolicy == 'Delete'
+    fail_msg: >-
+      The parsed transformation did not produce the pinned images, worker-only
+      node path map, data path, or default WaitForFirstConsumer StorageClass.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Confirm every desired object carries both ownership markers
+  ansible.builtin.assert:
+    that:
+      - >-
+        item.metadata.annotations[__local_path_provisioner_owner_annotation]
+        == __local_path_provisioner_owner_value
+      - >-
+        item.metadata.annotations[__local_path_provisioner_manifest_annotation]
+        == local_path_provisioner_manifest_sha256
+    fail_msg: >-
+      {{ item.kind }}/{{ item.metadata.name }} is missing the
+      local-path-provisioner ownership or source-checksum annotation.
+    quiet: true
+  loop: "{{ __local_path_provisioner_desired_objects }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+  delegate_to: localhost
+  run_once: true

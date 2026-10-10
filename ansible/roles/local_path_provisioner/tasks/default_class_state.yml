@@ -1,0 +1,45 @@
+---
+# Two default StorageClasses make the API server's choice for an unclassed PVC
+# depend on creation order, and the failure surfaces much later as a Pending
+# pod. Kept separate from cluster I/O so make check can prove the decision.
+
+- name: Reset the foreign default StorageClass list
+  ansible.builtin.set_fact:
+    __local_path_provisioner_foreign_defaults: []
+  run_once: true
+
+- name: Find default StorageClasses other than the one this role manages
+  ansible.builtin.set_fact:
+    __local_path_provisioner_foreign_defaults: >-
+      {{ __local_path_provisioner_foreign_defaults + [item.metadata.name] }}
+  vars:
+    __local_path_provisioner_class_annotations: >-
+      {{ item.metadata.annotations | default({}) }}
+  loop: >-
+    {{ (__local_path_provisioner_storageclasses_raw.stdout | from_json)['items'] }}
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when:
+    - item.metadata.name != __local_path_provisioner_storage_class
+    - >-
+      (__local_path_provisioner_class_annotations.get(
+         __local_path_provisioner_default_class_annotation, '') | string | lower
+       == 'true')
+      or
+      (__local_path_provisioner_class_annotations.get(
+         __local_path_provisioner_beta_default_class_annotation, '') | string | lower
+       == 'true')
+  run_once: true
+
+- name: Refuse to create a second default StorageClass
+  ansible.builtin.assert:
+    that:
+      - __local_path_provisioner_foreign_defaults | length == 0
+    fail_msg: >-
+      Another StorageClass is already marked default:
+      {{ __local_path_provisioner_foreign_defaults | join(', ') }}. Two defaults
+      make PVC binding depend on creation order. Remove the default annotation
+      from that class (or delete it) before installing local-path as default.
+    quiet: true
+  delegate_to: localhost
+  run_once: true

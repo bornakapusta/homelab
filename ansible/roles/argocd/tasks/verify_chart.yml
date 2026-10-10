@@ -1,0 +1,34 @@
+---
+- name: Read the pinned Argo CD chart metadata
+  ansible.builtin.command:
+    argv:
+      - helm
+      - show
+      - chart
+      - "{{ __argocd_chart_ref }}"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  register: __argocd_chart_metadata_raw
+  changed_when: false
+
+- name: Verify the pinned Argo CD chart and application versions
+  ansible.builtin.assert:
+    that:
+      - (__argocd_chart_metadata_raw.stdout | from_yaml).name == 'argo-cd'
+      - >-
+        (__argocd_chart_metadata_raw.stdout | from_yaml).version
+        == argocd_chart_version
+      - >-
+        (__argocd_chart_metadata_raw.stdout | from_yaml).appVersion
+        | regex_replace('^v', '') == argocd_version
+    fail_msg: >-
+      argocd_chart_sha256 does not resolve to argo-cd chart
+      {{ argocd_chart_version }} with Argo CD {{ argocd_version }}. Update the
+      chart version, application version, and digest together; Helm ignores
+      --version when an OCI digest is supplied.
+    quiet: true
+  delegate_to: localhost
+  become: false
+  run_once: true

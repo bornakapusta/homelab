@@ -1,0 +1,58 @@
+---
+argument_specs:
+  main:
+    short_description: Install pinned local-path-provisioner as the default StorageClass
+    description:
+      - Applies a checksum-pinned upstream local-path-provisioner manifest.
+      - >-
+        Pins the provisioner and helper images by digest and restricts volume
+        creation to inventory workers.
+      - >-
+        Requires an explicit acknowledgement of the helper pod's hostPath write
+        access to the data path.
+    options:
+      local_path_provisioner_version:
+        description: Exact local-path-provisioner release and manifest tag.
+        type: str
+        required: true
+      local_path_provisioner_manifest_sha256:
+        description: SHA-256 of deploy/local-path-storage.yaml at that tag.
+        type: str
+        required: true
+      local_path_provisioner_image_sha256:
+        description: Multi-architecture OCI image-index SHA-256 of the provisioner image.
+        type: str
+        required: true
+      local_path_provisioner_helper_image_version:
+        description: Exact busybox tag used by the volume setup/teardown helper pod.
+        type: str
+        required: true
+      local_path_provisioner_helper_image_sha256:
+        description: Multi-architecture OCI image-index SHA-256 of that busybox tag.
+        type: str
+        required: true
+      local_path_provisioner_data_path:
+        description: Absolute directory on each worker under which volumes are created.
+        type: str
+        required: true
+      local_path_provisioner_hostpath_acknowledged:
+        description:
+          - >-
+            Explicit acknowledgement that the helper pod receives hostPath
+            write access to the data path on every worker.
+        type: bool
+        required: true
+      local_path_provisioner_kubeconfig:
+        description: Admin kubeconfig fetched by the control_plane role.
+        type: str
+        required: false
+      local_path_provisioner_cluster_hosts:
+        description: Exact inventory node names expected in the API.
+        type: list
+        elements: str
+        required: false
+      local_path_provisioner_worker_hosts:
+        description: Inventory workers that may receive volumes.
+        type: list
+        elements: str
+        required: false

@@ -1,0 +1,31 @@
+---
+- name: Reset default-class outcome for {{ local_path_provisioner_default_class_case.name }}
+  ansible.builtin.set_fact:
+    __local_path_provisioner_default_class_rejected: false
+
+- name: Exercise default-class state for {{ local_path_provisioner_default_class_case.name }}
+  block:
+    - name: Run only the local-path-provisioner default-class tasks
+      ansible.builtin.include_role:
+        name: local_path_provisioner
+        tasks_from: default_class_state
+      vars:
+        __local_path_provisioner_storageclasses_raw:
+          stdout: >-
+            {{ {'items': local_path_provisioner_default_class_case.classes}
+               | to_json }}
+  rescue:
+    - name: Record that default-class evaluation rejected this case
+      ansible.builtin.set_fact:
+        __local_path_provisioner_default_class_rejected: true
+
+- name: Default-class outcome must match for {{ local_path_provisioner_default_class_case.name }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        __local_path_provisioner_default_class_rejected | bool
+        == local_path_provisioner_default_class_case.expect_rejected | bool
+    fail_msg: >-
+      {{ local_path_provisioner_default_class_case.name }} produced the wrong
+      default-StorageClass decision.
+    quiet: true

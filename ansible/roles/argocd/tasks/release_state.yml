@@ -1,0 +1,30 @@
+---
+# Pure comparison logic kept separate for controller-only regression tests.
+
+- name: Select the current Argo CD Helm release
+  ansible.builtin.set_fact:
+    __argocd_release: >-
+      {{ (__argocd_releases_raw.stdout | from_json | first)
+         if (__argocd_releases_raw.stdout | from_json | length > 0)
+         else {} }}
+  run_once: true
+
+- name: Select the current Argo CD user-supplied values
+  ansible.builtin.set_fact:
+    __argocd_current_values: >-
+      {{ (__argocd_values_raw.stdout | from_json)
+         if (__argocd_release | length > 0
+             and __argocd_values_raw.stdout | default('') | length > 0)
+         else {} }}
+  run_once: true
+
+- name: Decide whether Argo CD needs reconciliation
+  ansible.builtin.set_fact:
+    __argocd_needs_reconcile: >-
+      {{ __argocd_release.status | default('') != 'deployed'
+         or __argocd_release.chart | default('')
+            != 'argo-cd-' ~ argocd_chart_version
+         or __argocd_release.app_version | default('')
+            != 'v' ~ argocd_version
+         or __argocd_current_values != __argocd_helm_values }}
+  run_once: true

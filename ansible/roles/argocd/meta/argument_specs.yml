@@ -1,0 +1,65 @@
+---
+argument_specs:
+  main:
+    short_description: Install a pinned Argo CD and its root Application
+    description:
+      - Installs Argo CD from a digest-pinned official OCI Helm chart.
+      - Exposes the UI through a standard Traefik Ingress.
+      - Applies one root Application (app-of-apps) pointing at clusters/.
+    options:
+      argocd_chart_version:
+        description: Exact official argo-cd Helm chart version.
+        type: str
+        required: true
+      argocd_chart_sha256:
+        description: OCI manifest sha256 for the official Helm chart.
+        type: str
+        required: true
+      argocd_version:
+        description: Exact Argo CD application version, without the leading v.
+        type: str
+        required: true
+      argocd_image_sha256:
+        description: Multi-architecture OCI index sha256 for the Argo CD image.
+        type: str
+        required: true
+      argocd_redis_version:
+        description: Exact Redis image tag the chart pins, e.g. 8.6.4-alpine.
+        type: str
+        required: true
+      argocd_redis_image_sha256:
+        description: Multi-architecture OCI index sha256 for the Redis image.
+        type: str
+        required: true
+      argocd_root_repo_url:
+        description: Anonymous HTTPS git URL the root Application syncs from.
+        type: str
+        required: true
+      argocd_root_revision:
+        description: Git revision (branch, tag or commit) of the root Application.
+        type: str
+        required: false
+      argocd_root_path:
+        description: Repository-relative directory holding child Applications.
+        type: str
+        required: false
+      argocd_root_app_name:
+        description: Name of the root Application.
+        type: str
+        required: false
+      argocd_release_name:
+        description: Helm release name and workload name prefix.
+        type: str
+        required: false
+      argocd_hostname:
+        description: Host name served by the Argo CD Ingress.
+        type: str
+        required: false
+      argocd_ingress_class_name:
+        description: IngressClass for the Argo CD UI.
+        type: str
+        required: false
+      argocd_kubeconfig:
+        description: Admin kubeconfig fetched by the control_plane role.
+        type: str
+        required: false

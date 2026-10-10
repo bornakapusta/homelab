@@ -1,0 +1,409 @@
+---
+- name: Exercise local-path-provisioner validation and manifest preparation
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    local_path_provisioner_validation_digest: >-
+      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    local_path_provisioner_valid_cluster_hosts: [node-1, node-2, node-3]
+    local_path_provisioner_valid_worker_hosts: [node-2, node-3]
+    local_path_provisioner_valid_data_path: /var/lib/local-path-provisioner
+    local_path_provisioner_validation_cases:
+      - name: valid pinned worker-only contract
+        expect_rejected: false
+      - name: malformed release version
+        version: latest
+        expect_rejected: true
+      - name: malformed manifest digest
+        manifest_digest: not-a-digest
+        expect_rejected: true
+      - name: malformed provisioner image digest
+        image_digest: not-a-digest
+        expect_rejected: true
+      - name: malformed helper image version
+        helper_version: latest
+        expect_rejected: true
+      - name: malformed helper image digest
+        helper_digest: not-a-digest
+        expect_rejected: true
+      - name: hostPath exception not acknowledged
+        hostpath_acknowledged: false
+        expect_rejected: true
+      - name: relative data path
+        data_path: var/lib/local-path-provisioner
+        expect_rejected: true
+      - name: root data path
+        data_path: /
+        expect_rejected: true
+      - name: data path under tmp
+        data_path: /tmp/local-path
+        expect_rejected: true
+      - name: data path with parent traversal
+        data_path: /var/lib/../../etc
+        expect_rejected: true
+      - name: empty worker host list
+        worker_nodes: []
+        expect_rejected: true
+      - name: duplicate worker host
+        worker_nodes: [node-2, node-2]
+        expect_rejected: true
+      - name: worker missing from cluster inventory
+        worker_nodes: [node-2, node-4]
+        expect_rejected: true
+      - name: control-plane node offered as a storage node
+        worker_nodes: [node-1, node-2, node-3]
+        expect_rejected: true
+      - name: empty cluster host list
+        cluster_nodes: []
+        expect_rejected: true
+    local_path_provisioner_source_fixture:
+      - apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: local-path-storage
+      - apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: local-path-provisioner-service-account
+          namespace: local-path-storage
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          name: local-path-provisioner-role
+          namespace: local-path-storage
+        rules: []
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: local-path-provisioner-role
+        rules: []
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: local-path-provisioner-bind
+          namespace: local-path-storage
+        roleRef: {}
+        subjects: []
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: local-path-provisioner-bind
+        roleRef: {}
+        subjects: []
+      - apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: local-path-provisioner
+          namespace: local-path-storage
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: local-path-provisioner
+          template:
+            metadata:
+              labels:
+                app: local-path-provisioner
+            spec:
+              serviceAccountName: local-path-provisioner-service-account
+              containers:
+                - name: local-path-provisioner
+                  image: docker.io/rancher/local-path-provisioner:v0.0.37
+                  imagePullPolicy: IfNotPresent
+                  command:
+                    - local-path-provisioner
+                    - --debug
+                    - start
+                    - --config
+                    - /etc/config/config.json
+                  readinessProbe:
+                    httpGet:
+                      path: /ready
+                      port: health
+                  volumeMounts:
+                    - name: config-volume
+                      mountPath: /etc/config/
+              volumes:
+                - name: config-volume
+                  configMap:
+                    name: local-path-config
+      - apiVersion: storage.k8s.io/v1
+        kind: StorageClass
+        metadata:
+          name: local-path
+        provisioner: rancher.io/local-path
+        volumeBindingMode: WaitForFirstConsumer
+        reclaimPolicy: Delete
+      - kind: ConfigMap
+        apiVersion: v1
+        metadata:
+          name: local-path-config
+          namespace: local-path-storage
+        data:
+          config.json: |-
+            {
+                    "nodePathMap":[
+                    {
+                            "node":"DEFAULT_PATH_FOR_NON_LISTED_NODES",
+                            "paths":["/opt/local-path-provisioner"]
+                    }
+                    ]
+            }
+          setup: |-
+            #!/bin/sh
+            set -eu
+            mkdir -m 0777 -p "$VOL_DIR"
+          teardown: |-
+            #!/bin/sh
+            set -eu
+            rm -rf "$VOL_DIR"
+          helperPod.yaml: |-
+            apiVersion: v1
+            kind: Pod
+            metadata:
+              name: helper-pod
+            spec:
+              priorityClassName: system-node-critical
+              tolerations:
+                - key: node.kubernetes.io/disk-pressure
+                  operator: Exists
+                  effect: NoSchedule
+              containers:
+              - name: helper-pod
+                image: docker.io/library/busybox
+                imagePullPolicy: IfNotPresent
+    local_path_provisioner_manifest_shape_cases:
+      - name: missing ConfigMap
+        mutation: missing_config_map
+      - name: unexpected provisioner image
+        mutation: deployment_image
+      - name: StorageClass binds immediately
+        mutation: immediate_binding
+      - name: upstream default path changed
+        mutation: config_path
+      - name: helper image changed
+        mutation: helper_image
+    local_path_provisioner_default_class_cases:
+      - name: no StorageClasses
+        classes: []
+        expect_rejected: false
+      - name: local-path is already the default
+        classes:
+          - metadata:
+              name: local-path
+              annotations:
+                storageclass.kubernetes.io/is-default-class: "true"
+        expect_rejected: false
+      - name: another non-default class
+        classes:
+          - metadata:
+              name: nfs
+              annotations:
+                storageclass.kubernetes.io/is-default-class: "false"
+          - metadata:
+              name: manual
+        expect_rejected: false
+      - name: another default class
+        classes:
+          - metadata:
+              name: longhorn
+              annotations:
+                storageclass.kubernetes.io/is-default-class: "true"
+        expect_rejected: true
+      - name: another default class with the beta annotation
+        classes:
+          - metadata:
+              name: legacy
+              annotations:
+                storageclass.beta.kubernetes.io/is-default-class: "true"
+        expect_rejected: true
+    local_path_provisioner_ownership_cases:
+      - name: all managed resources absent
+        results:
+          - item:
+              resource: deployments.apps
+              namespace: local-path-storage
+              name: local-path-provisioner
+            stdout: ''
+        expect_rejected: false
+      - name: existing resource has the role owner
+        results:
+          - item:
+              resource: storageclasses.storage.k8s.io
+              namespace: ''
+              name: local-path
+            stdout: >-
+              {"metadata":{"annotations":{"homelab.home.arpa/local-path-provisioner-managed-by":"ansible-local-path-provisioner"}}}
+        expect_rejected: false
+      - name: existing resource is unowned
+        results:
+          - item:
+              resource: storageclasses.storage.k8s.io
+              namespace: ''
+              name: local-path
+            stdout: '{"metadata":{"annotations":{}}}'
+        expect_rejected: true
+    local_path_provisioner_reconcile_state_cases:
+      - name: exact desired state
+        namespace_exists: true
+        rc: 0
+        expect_reconcile: false
+      - name: drifted or absent desired state
+        namespace_exists: true
+        rc: 1
+        expect_reconcile: true
+      - name: first install with no namespace and no diff
+        namespace_exists: false
+        rc: null
+        expect_reconcile: true
+  tasks:
+    - name: Run each local-path-provisioner input-validation case
+      ansible.builtin.include_tasks: tasks/local_path_provisioner_validation_case.yml
+      loop: "{{ local_path_provisioner_validation_cases }}"
+      loop_control:
+        loop_var: local_path_provisioner_validation_case
+        label: "{{ local_path_provisioner_validation_case.name }}"
+
+    - name: Prepare the valid parsed manifest fixture
+      ansible.builtin.include_role:
+        name: local_path_provisioner
+        tasks_from: prepare_manifest
+        public: true
+      vars:
+        local_path_provisioner_version: 0.0.37
+        local_path_provisioner_manifest_sha256: "{{ local_path_provisioner_validation_digest }}"
+        local_path_provisioner_image_sha256: "{{ local_path_provisioner_validation_digest }}"
+        local_path_provisioner_helper_image_version: 1.38.0
+        local_path_provisioner_helper_image_sha256: "{{ local_path_provisioner_validation_digest }}"
+        local_path_provisioner_data_path: "{{ local_path_provisioner_valid_data_path }}"
+        local_path_provisioner_hostpath_acknowledged: true
+        local_path_provisioner_kubeconfig: /tmp/local-path-provisioner-validation-kubeconfig
+        local_path_provisioner_cluster_hosts: "{{ local_path_provisioner_valid_cluster_hosts }}"
+        local_path_provisioner_worker_hosts: "{{ local_path_provisioner_valid_worker_hosts }}"
+        __local_path_provisioner_source_objects: "{{ local_path_provisioner_source_fixture }}"
+
+    - name: Parse the prepared provisioner config and helper pod
+      ansible.builtin.set_fact:
+        __local_path_provisioner_case_config: >-
+          {{ __local_path_provisioner_desired_config_map.data['config.json']
+             | from_json }}
+        __local_path_provisioner_case_helper: >-
+          {{ __local_path_provisioner_desired_config_map.data['helperPod.yaml']
+             | from_yaml }}
+
+    - name: Confirm preparation is worker-only and preserves upstream fields
+      ansible.builtin.assert:
+        that:
+          - >-
+            __local_path_provisioner_case_config
+            == {'nodePathMap': [
+                 {'node': 'node-2', 'paths': ['/var/lib/local-path-provisioner']},
+                 {'node': 'node-3', 'paths': ['/var/lib/local-path-provisioner']}
+               ]}
+          - >-
+            __local_path_provisioner_case_helper.spec.containers[0].image
+            == 'docker.io/library/busybox:1.38.0@sha256:'
+               ~ local_path_provisioner_validation_digest
+          - >-
+            __local_path_provisioner_case_helper.spec.priorityClassName
+            == 'system-node-critical'
+          - __local_path_provisioner_case_helper.spec.tolerations | length == 1
+          - >-
+            __local_path_provisioner_desired_config_map.data.setup
+            == (local_path_provisioner_source_fixture
+                | selectattr('kind', 'equalto', 'ConfigMap') | first).data.setup
+          - >-
+            __local_path_provisioner_desired_config_map.data.teardown
+            == (local_path_provisioner_source_fixture
+                | selectattr('kind', 'equalto', 'ConfigMap') | first).data.teardown
+          - >-
+            __local_path_provisioner_desired_container.image
+            == 'docker.io/rancher/local-path-provisioner:v0.0.37@sha256:'
+               ~ local_path_provisioner_validation_digest
+          - >-
+            __local_path_provisioner_desired_container.readinessProbe.httpGet.path
+            == '/ready'
+          - >-
+            __local_path_provisioner_desired_deployment.spec.template.spec.volumes
+            | length == 1
+          - >-
+            __local_path_provisioner_desired_storage_class.metadata.annotations[
+              'storageclass.kubernetes.io/is-default-class'
+            ] == 'true'
+          - >-
+            __local_path_provisioner_desired_storage_class.volumeBindingMode
+            == 'WaitForFirstConsumer'
+        fail_msg: >-
+          Parsed transformation produced the wrong node path map or helper
+          image, or dropped an upstream script, probe, volume, or StorageClass
+          field.
+        quiet: true
+
+    - name: Render the prepared fixture through the role template
+      ansible.builtin.set_fact:
+        __local_path_provisioner_rendered_fixture: >-
+          {{ lookup(
+               'ansible.builtin.template',
+               playbook_dir ~ '/../roles/local_path_provisioner/templates/local-path-storage.yml.j2'
+             ) }}
+
+    - name: Parse the rendered fixture again
+      ansible.builtin.set_fact:
+        __local_path_provisioner_rendered_fixture_objects: >-
+          {{ __local_path_provisioner_rendered_fixture | from_yaml_all | list }}
+
+    - name: Rendering must round-trip all nine annotated objects
+      ansible.builtin.assert:
+        that:
+          - __local_path_provisioner_rendered_fixture_objects | length == 9
+          - >-
+            (__local_path_provisioner_rendered_fixture_objects
+             | selectattr('kind', 'equalto', 'ConfigMap') | first).data['config.json']
+            | from_json == __local_path_provisioner_case_config
+        fail_msg: >-
+          The role template did not render a complete parseable object set.
+        quiet: true
+
+    - name: Every round-tripped object must retain ownership annotations
+      ansible.builtin.assert:
+        that:
+          - >-
+            item.metadata.annotations[__local_path_provisioner_owner_annotation]
+            == __local_path_provisioner_owner_value
+          - >-
+            item.metadata.annotations[__local_path_provisioner_manifest_annotation]
+            == local_path_provisioner_validation_digest
+        quiet: true
+      loop: "{{ __local_path_provisioner_rendered_fixture_objects }}"
+      loop_control:
+        label: "{{ item.kind }}/{{ item.metadata.name }}"
+
+    - name: Run each fail-closed manifest-shape case
+      ansible.builtin.include_tasks: tasks/local_path_provisioner_manifest_case.yml
+      loop: "{{ local_path_provisioner_manifest_shape_cases }}"
+      loop_control:
+        loop_var: local_path_provisioner_manifest_shape_case
+        label: "{{ local_path_provisioner_manifest_shape_case.name }}"
+
+    - name: Run each default-StorageClass decision case
+      ansible.builtin.include_tasks: tasks/local_path_provisioner_default_class_case.yml
+      loop: "{{ local_path_provisioner_default_class_cases }}"
+      loop_control:
+        loop_var: local_path_provisioner_default_class_case
+        label: "{{ local_path_provisioner_default_class_case.name }}"
+
+    - name: Run each local-path-provisioner ownership-decision case
+      ansible.builtin.include_tasks: tasks/local_path_provisioner_ownership_case.yml
+      loop: "{{ local_path_provisioner_ownership_cases }}"
+      loop_control:
+        loop_var: local_path_provisioner_ownership_case
+        label: "{{ local_path_provisioner_ownership_case.name }}"
+
+    - name: Run each local-path-provisioner reconciliation-decision case
+      ansible.builtin.include_tasks: tasks/local_path_provisioner_reconcile_state_case.yml
+      loop: "{{ local_path_provisioner_reconcile_state_cases }}"
+      loop_control:
+        loop_var: local_path_provisioner_reconcile_state_case
+        label: "{{ local_path_provisioner_reconcile_state_case.name }}"

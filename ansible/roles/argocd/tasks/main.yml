@@ -1,0 +1,318 @@
+---
+# The GitOps controller itself. Ansible owns this release so Argo CD never
+# reconciles its own installation; everything Argo CD manages is declared
+# under clusters/ and reached through one root Application.
+
+- name: Validate Argo CD operator inputs
+  ansible.builtin.include_tasks: validate.yml
+
+- name: Locate the fetched admin kubeconfig
+  ansible.builtin.stat:
+    path: "{{ argocd_kubeconfig }}"
+  delegate_to: localhost
+  run_once: true
+  register: __argocd_kubeconfig_stat
+
+- name: The cluster must be bootstrapped before Argo CD
+  ansible.builtin.assert:
+    that:
+      - __argocd_kubeconfig_stat.stat.exists
+      - __argocd_kubeconfig_stat.stat.isreg
+    fail_msg: >-
+      {{ argocd_kubeconfig }} does not exist. Run `make cluster` first; the
+      control_plane role fetches the admin kubeconfig used by this role.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Read the controller Helm version
+  ansible.builtin.command: helm version --short
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  register: __argocd_helm_version
+  failed_when: false
+  changed_when: false
+
+- name: Normalise the controller Helm version
+  ansible.builtin.set_fact:
+    __argocd_helm_semver: >-
+      {{ __argocd_helm_version.stdout
+         | default('v0.0.0', true)
+         | regex_replace('^v', '')
+         | regex_replace('\+.*$', '') }}
+  run_once: true
+
+- name: Controller Helm must support the pinned Kubernetes release
+  ansible.builtin.assert:
+    that:
+      - __argocd_helm_version.rc == 0
+      - __argocd_helm_semver is version('4.2.0', '>=')
+      - __argocd_helm_semver is version('5.0.0', '<')
+    fail_msg: >-
+      Kubernetes 1.36 needs Helm 4.2.x according to Helm's version-skew policy,
+      and this role fails closed on unreviewed major versions. Install or
+      upgrade Helm on the Ansible controller, then rerun `make argocd`.
+    quiet: true
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Confirm every cluster node is Ready before adding Argo CD
+  ansible.builtin.command:
+    argv: >-
+      {{ __argocd_kubectl_wait_argv + [
+           'wait', '--for=condition=Ready', 'nodes', '--all', '--timeout=30s'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  changed_when: false
+
+- name: Read the current Argo CD Helm release
+  ansible.builtin.command:
+    argv:
+      - helm
+      - list
+      - --namespace
+      - "{{ __argocd_namespace }}"
+      - --filter
+      - "^{{ argocd_release_name }}$"
+      - --output
+      - json
+      - --kubeconfig
+      - "{{ argocd_kubeconfig }}"
+      - --kube-apiserver
+      - "https://{{ ansible_host }}:6443"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  register: __argocd_releases_raw
+  changed_when: false
+
+- name: Read the current Argo CD user-supplied values
+  ansible.builtin.command:
+    argv:
+      - helm
+      - get
+      - values
+      - "{{ argocd_release_name }}"
+      - --namespace
+      - "{{ __argocd_namespace }}"
+      - --output
+      - json
+      - --kubeconfig
+      - "{{ argocd_kubeconfig }}"
+      - --kube-apiserver
+      - "https://{{ ansible_host }}:6443"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  when: __argocd_releases_raw.stdout | from_json | length > 0
+  register: __argocd_values_raw
+  changed_when: false
+
+- name: Compare the current and desired Argo CD release state
+  ansible.builtin.include_tasks: release_state.yml
+
+- name: Predict Argo CD reconciliation
+  ansible.builtin.debug:
+    msg: >-
+      Argo CD chart {{ argocd_chart_version }} with Argo CD
+      {{ argocd_version }} would be reconciled at {{ argocd_hostname }}.
+  when:
+    - ansible_check_mode
+    - __argocd_needs_reconcile
+  changed_when: true
+  run_once: true
+
+- name: Verify the pinned chart before reconciliation
+  ansible.builtin.include_tasks: verify_chart.yml
+  when: __argocd_needs_reconcile
+
+- name: Reconcile the pinned Argo CD Helm release
+  when:
+    - not ansible_check_mode
+    - __argocd_needs_reconcile
+  block:
+    - name: Create temporary storage for Argo CD values
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: argocd-values-
+      delegate_to: localhost
+      become: false
+      register: __argocd_values_dir
+      changed_when: false
+
+    - name: Render the exact Argo CD values
+      ansible.builtin.copy:
+        dest: "{{ __argocd_values_dir.path }}/values.yml"
+        content: |
+          {{ __argocd_managed_header }}
+          # Temporary Helm values; do not edit.
+          {{ __argocd_helm_values | to_nice_yaml(indent=2) }}
+        mode: "0600"
+        backup: true
+      delegate_to: localhost
+      become: false
+
+    # The chart ships the Application/AppProject/ApplicationSet CRDs as
+    # templates (kept on uninstall via helm.sh/resource-policy), so --skip-crds
+    # is deliberately absent here, unlike Traefik.
+    - name: Install or upgrade Argo CD from its pinned OCI digest
+      ansible.builtin.command:
+        argv:
+          - helm
+          - upgrade
+          - --install
+          - "{{ argocd_release_name }}"
+          - "{{ __argocd_chart_ref }}"
+          - --namespace
+          - "{{ __argocd_namespace }}"
+          - --create-namespace
+          - --values
+          - "{{ __argocd_values_dir.path }}/values.yml"
+          - --rollback-on-failure
+          - --wait
+          - --timeout
+          - 10m
+          - --history-max
+          - "5"
+          - --kubeconfig
+          - "{{ argocd_kubeconfig }}"
+          - --kube-apiserver
+          - "https://{{ ansible_host }}:6443"
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+  always:
+    - name: Remove the temporary Argo CD values
+      ansible.builtin.file:
+        path: "{{ __argocd_values_dir.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      when:
+        - __argocd_values_dir is defined
+        - __argocd_values_dir.path is defined
+      changed_when: false
+
+- name: Wait for the Argo CD workloads
+  ansible.builtin.command:
+    argv: >-
+      {{ __argocd_kubectl_wait_argv + [
+           '--namespace', __argocd_namespace, 'rollout', 'status',
+           item, '--timeout=300s'
+         ] }}
+  loop: "{{ __argocd_workloads }}"
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: not ansible_check_mode
+  changed_when: false
+
+- name: Read the deployed Argo CD server
+  ansible.builtin.command:
+    argv: >-
+      {{ __argocd_kubectl_argv + [
+           '--namespace', __argocd_namespace, 'get', 'deployment',
+           argocd_release_name ~ '-server', '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: not ansible_check_mode
+  register: __argocd_server_raw
+  changed_when: false
+
+- name: Read the deployed Argo CD Redis
+  ansible.builtin.command:
+    argv: >-
+      {{ __argocd_kubectl_argv + [
+           '--namespace', __argocd_namespace, 'get', 'deployment',
+           argocd_release_name ~ '-redis', '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: not ansible_check_mode
+  register: __argocd_redis_raw
+  changed_when: false
+
+- name: Read the Argo CD Ingress
+  ansible.builtin.command:
+    argv: >-
+      {{ __argocd_kubectl_argv + [
+           '--namespace', __argocd_namespace, 'get', 'ingress',
+           argocd_release_name ~ '-server', '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  when: not ansible_check_mode
+  register: __argocd_ingress_raw
+  changed_when: false
+
+- name: Parse the live Argo CD resources
+  ansible.builtin.set_fact:
+    __argocd_server: "{{ __argocd_server_raw.stdout | from_json }}"
+    __argocd_redis: "{{ __argocd_redis_raw.stdout | from_json }}"
+    __argocd_ingress: "{{ __argocd_ingress_raw.stdout | from_json }}"
+  when: not ansible_check_mode
+  run_once: true
+
+- name: Confirm the live Argo CD images and Ingress
+  ansible.builtin.assert:
+    that:
+      - >-
+        __argocd_server.spec.template.spec.containers[0].image
+        == __argocd_image
+      - __argocd_server.spec.replicas == 1
+      - >-
+        __argocd_redis.spec.template.spec.containers[0].image
+        == __argocd_redis_image
+      - >-
+        __argocd_ingress.spec.ingressClassName == argocd_ingress_class_name
+      - >-
+        __argocd_ingress.spec.rules | map(attribute='host') | list
+        == [argocd_hostname]
+    fail_msg: >-
+      The live Argo CD workloads are not using the immutable images, the
+      one-replica server, or the {{ argocd_hostname }} Ingress managed by this
+      role.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+  when: not ansible_check_mode
+
+# Client-side apply on purpose: it reports `unchanged` on a converged run,
+# whereas server-side apply always reports `serverside-applied`. The
+# controller only writes .status and .operation, which the three-way merge
+# against last-applied-configuration ignores.
+- name: Reconcile the root Application
+  ansible.builtin.command:
+    argv: >-
+      {{ __argocd_kubectl_argv + ['apply', '--filename', '-'] }}
+    stdin: "{{ __argocd_root_application | to_json }}"
+  delegate_to: localhost
+  run_once: true
+  when: not ansible_check_mode
+  register: __argocd_root_apply
+  changed_when: >-
+    'created' in __argocd_root_apply.stdout
+    or 'configured' in __argocd_root_apply.stdout
+
+- name: Report the Argo CD entry points
+  ansible.builtin.debug:
+    msg: >-
+      Argo CD {{ argocd_version }} is healthy at http://{{ argocd_hostname }}
+      and syncs {{ argocd_root_repo_url }} ({{ argocd_root_revision }}:
+      {{ argocd_root_path }}). Read the initial admin password with: kubectl
+      -n {{ __argocd_namespace }} get secret argocd-initial-admin-secret -o
+      jsonpath='{.data.password}' | base64 -d
+  when: not ansible_check_mode
+  run_once: true

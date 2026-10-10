@@ -1,0 +1,12 @@
+---
+# kubectl diff uses 0 for exact state and 1 for drift. It is skipped while the
+# namespace is absent (first install), which always means reconcile. Isolating
+# this mapping makes the mutation decision directly testable without a live
+# API server.
+
+- name: Record whether local-path-provisioner needs reconciliation
+  ansible.builtin.set_fact:
+    __local_path_provisioner_needs_reconcile: >-
+      {{ not (__local_path_provisioner_namespace_exists | bool)
+         or __local_path_provisioner_manifest_diff.rc == 1 }}
+  run_once: true

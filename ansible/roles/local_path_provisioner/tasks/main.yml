@@ -1,0 +1,353 @@
+---
+# Reconcile the checksum-pinned upstream manifest from the controller, then
+# prove the provisioner is running and the worker-only default StorageClass is
+# live. No task installs packages directly on a node.
+
+- name: Validate local-path-provisioner operator inputs
+  ansible.builtin.include_tasks: validate.yml
+
+- name: Locate the fetched admin kubeconfig
+  ansible.builtin.stat:
+    path: "{{ local_path_provisioner_kubeconfig }}"
+  delegate_to: localhost
+  run_once: true
+  register: __local_path_provisioner_kubeconfig_stat
+
+- name: The cluster must be bootstrapped before local-path-provisioner
+  ansible.builtin.assert:
+    that:
+      - __local_path_provisioner_kubeconfig_stat.stat.exists
+      - __local_path_provisioner_kubeconfig_stat.stat.isreg
+    fail_msg: >-
+      {{ local_path_provisioner_kubeconfig }} does not exist. Run `make
+      cluster` first; the control_plane role fetches the admin kubeconfig used
+      here.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Read current cluster nodes before adding storage
+  ansible.builtin.command:
+    argv: >-
+      {{ __local_path_provisioner_kubectl_argv + [
+           'get', 'nodes', '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  register: __local_path_provisioner_nodes_raw
+  changed_when: false
+
+# nodePathMap matches API Node names; an inventory name the API does not know
+# would silently leave that worker without storage.
+- name: The live cluster must match the inventory exactly
+  ansible.builtin.assert:
+    that:
+      - >-
+        (__local_path_provisioner_nodes_raw.stdout | from_json)['items']
+        | map(attribute='metadata.name') | sort | list
+        == local_path_provisioner_cluster_hosts | sort
+    fail_msg: >-
+      Refusing to install local-path-provisioner because the API node set does
+      not exactly match cluster_hosts
+      ({{ local_path_provisioner_cluster_hosts | sort | join(', ') }}).
+      Reconcile inventory and cluster membership first.
+    quiet: true
+  delegate_to: localhost
+  run_once: true
+
+- name: Read existing StorageClasses
+  ansible.builtin.command:
+    argv: >-
+      {{ __local_path_provisioner_kubectl_argv + [
+           'get', 'storageclasses', '--output', 'json'
+         ] }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  register: __local_path_provisioner_storageclasses_raw
+  changed_when: false
+
+- name: Evaluate existing default StorageClasses
+  ansible.builtin.include_tasks: default_class_state.yml
+
+- name: Inspect well-known local-path-provisioner resources before adoption
+  ansible.builtin.command:
+    argv: >-
+      {{ __local_path_provisioner_kubectl_argv
+         + (['--namespace', item.namespace]
+            if item.namespace | length > 0 else [])
+         + [
+             'get', item.resource, item.name, '--ignore-not-found',
+             '--output', 'json'
+           ] }}
+  loop: "{{ __local_path_provisioner_managed_resources }}"
+  loop_control:
+    label: >-
+      {{ (item.namespace ~ '/' if item.namespace | length > 0 else '')
+         ~ item.resource ~ '/' ~ item.name }}
+  delegate_to: localhost
+  run_once: true
+  check_mode: false
+  register: __local_path_provisioner_existing_resources_raw
+  changed_when: false
+
+- name: Evaluate local-path-provisioner ownership
+  ansible.builtin.include_tasks: ownership_state.yml
+
+- name: Stage, compare, and reconcile the pinned local-path-provisioner manifest
+  block:
+    - name: Create temporary storage for the local-path-provisioner manifest
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: local-path-provisioner-
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      register: __local_path_provisioner_temp_dir
+      changed_when: false
+
+    - name: Download the checksum-pinned upstream local-path-provisioner manifest
+      ansible.builtin.get_url:
+        url: "{{ __local_path_provisioner_manifest_url }}"
+        dest: "{{ __local_path_provisioner_temp_dir.path }}/local-path-storage-upstream.yml"
+        checksum: "sha256:{{ local_path_provisioner_manifest_sha256 }}"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      changed_when: false
+
+    - name: Read the verified upstream local-path-provisioner manifest
+      ansible.builtin.slurp:
+        path: "{{ __local_path_provisioner_temp_dir.path }}/local-path-storage-upstream.yml"
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      register: __local_path_provisioner_manifest_raw
+
+    - name: Decode the verified local-path-provisioner manifest
+      ansible.builtin.set_fact:
+        __local_path_provisioner_source_manifest_content: >-
+          {{ __local_path_provisioner_manifest_raw.content | b64decode }}
+        __local_path_provisioner_source_objects: >-
+          {{ __local_path_provisioner_manifest_raw.content | b64decode
+             | from_yaml_all | list }}
+      run_once: true
+
+    - name: Prepare the deterministic homelab local-path-provisioner manifest
+      ansible.builtin.include_tasks: prepare_manifest.yml
+
+    - name: Render the desired local-path-provisioner object set
+      ansible.builtin.template:
+        src: local-path-storage.yml.j2
+        dest: "{{ __local_path_provisioner_temp_dir.path }}/local-path-storage-homelab.yml"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      changed_when: false
+
+    - name: Read the rendered local-path-provisioner manifest
+      ansible.builtin.slurp:
+        path: "{{ __local_path_provisioner_temp_dir.path }}/local-path-storage-homelab.yml"
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      register: __local_path_provisioner_rendered_manifest_raw
+
+    - name: Parse the rendered local-path-provisioner manifest again
+      ansible.builtin.set_fact:
+        __local_path_provisioner_rendered_objects: >-
+          {{ __local_path_provisioner_rendered_manifest_raw.content | b64decode
+             | from_yaml_all | list }}
+        __local_path_provisioner_rendered_resource_keys: []
+      run_once: true
+
+    - name: Inventory the rendered local-path-provisioner resource keys
+      ansible.builtin.set_fact:
+        __local_path_provisioner_rendered_resource_keys: >-
+          {{ __local_path_provisioner_rendered_resource_keys + [
+               item.apiVersion ~ '|' ~ item.kind ~ '|' ~
+               (item.metadata.namespace | default('_cluster')) ~ '|' ~
+               item.metadata.name
+             ] }}
+      loop: "{{ __local_path_provisioner_rendered_objects }}"
+      loop_control:
+        label: "{{ item.kind }}/{{ item.metadata.name }}"
+      run_once: true
+
+    - name: Confirm rendering preserved the complete object set
+      ansible.builtin.assert:
+        that:
+          - __local_path_provisioner_rendered_objects | length == 9
+          - >-
+            __local_path_provisioner_rendered_resource_keys | sort
+            == __local_path_provisioner_expected_resource_keys | sort
+        fail_msg: >-
+          The rendered local-path-provisioner YAML did not round-trip to the
+          complete nine-object set. Refusing to pass it to kubectl.
+        quiet: true
+      delegate_to: localhost
+      run_once: true
+
+    # A server-side diff of namespaced objects fails (rc 2) while their
+    # namespace does not exist, so a first install skips straight to apply.
+    - name: Record whether the provisioner namespace already exists
+      ansible.builtin.set_fact:
+        __local_path_provisioner_namespace_exists: >-
+          {{ __local_path_provisioner_existing_resources_raw.results
+             | selectattr('item.resource', 'equalto', 'namespaces')
+             | map(attribute='stdout') | select | list | length > 0 }}
+      run_once: true
+
+    - name: Compare the complete desired local-path-provisioner object set
+      ansible.builtin.command:
+        argv: >-
+          {{ __local_path_provisioner_kubectl_argv + [
+               'diff', '--server-side=true',
+               '--field-manager=ansible-local-path-provisioner',
+               '--force-conflicts', '--filename',
+               __local_path_provisioner_temp_dir.path ~ '/local-path-storage-homelab.yml'
+             ] }}
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      when: __local_path_provisioner_namespace_exists | bool
+      register: __local_path_provisioner_manifest_diff
+      failed_when: __local_path_provisioner_manifest_diff.rc not in [0, 1]
+      changed_when: false
+
+    - name: Evaluate the local-path-provisioner diff result
+      ansible.builtin.include_tasks: reconcile_state.yml
+
+    - name: Predict local-path-provisioner reconciliation
+      ansible.builtin.debug:
+        msg: >-
+          local-path-provisioner {{ local_path_provisioner_version }} would be
+          reconciled from the checksum-verified manifest and immutable image
+          digests.
+      when:
+        - ansible_check_mode
+        - __local_path_provisioner_needs_reconcile
+      changed_when: true
+      run_once: true
+
+    - name: Reconcile the complete local-path-provisioner object set
+      ansible.builtin.command:
+        argv: >-
+          {{ __local_path_provisioner_kubectl_argv + [
+               'apply', '--server-side=true',
+               '--field-manager=ansible-local-path-provisioner',
+               '--force-conflicts', '--filename',
+               __local_path_provisioner_temp_dir.path ~ '/local-path-storage-homelab.yml'
+             ] }}
+      delegate_to: localhost
+      become: false
+      when:
+        - not ansible_check_mode
+        - __local_path_provisioner_needs_reconcile
+      changed_when: true
+
+    - name: Verify the live provisioner and default StorageClass
+      when: not ansible_check_mode
+      block:
+        - name: Wait for the local-path-provisioner Deployment
+          ansible.builtin.command:
+            argv: >-
+              {{ __local_path_provisioner_kubectl_wait_argv + [
+                   '--namespace', __local_path_provisioner_namespace,
+                   'rollout', 'status', 'deployment/local-path-provisioner',
+                   '--timeout=180s'
+                 ] }}
+          delegate_to: localhost
+          check_mode: false
+          changed_when: false
+
+        - name: Read the live local-path-provisioner resources
+          ansible.builtin.command:
+            argv: >-
+              {{ __local_path_provisioner_kubectl_argv
+                 + (['--namespace', __local_path_provisioner_namespace]
+                    if item.namespaced else [])
+                 + ['get', item.resource, item.name, '--output', 'json'] }}
+          loop:
+            - resource: deployments.apps
+              name: local-path-provisioner
+              namespaced: true
+            - resource: configmaps
+              name: local-path-config
+              namespaced: true
+            - resource: storageclasses.storage.k8s.io
+              name: local-path
+              namespaced: false
+          loop_control:
+            label: "{{ item.resource }}/{{ item.name }}"
+          delegate_to: localhost
+          check_mode: false
+          register: __local_path_provisioner_live_raw
+          changed_when: false
+
+        - name: Parse the live local-path-provisioner resources
+          ansible.builtin.set_fact:
+            __local_path_provisioner_live_deployment: >-
+              {{ __local_path_provisioner_live_raw.results[0].stdout | from_json }}
+            __local_path_provisioner_live_config: >-
+              {{ (__local_path_provisioner_live_raw.results[1].stdout
+                  | from_json).data['config.json'] | from_json }}
+            __local_path_provisioner_live_storage_class: >-
+              {{ __local_path_provisioner_live_raw.results[2].stdout | from_json }}
+          run_once: true
+
+        - name: Confirm the live image, worker-only path, and default class contract
+          ansible.builtin.assert:
+            that:
+              - >-
+                __local_path_provisioner_live_deployment.status.readyReplicas
+                | default(0) == 1
+              - >-
+                (__local_path_provisioner_live_deployment.spec.template.spec.containers
+                 | first).image == __local_path_provisioner_image
+              - >-
+                __local_path_provisioner_live_config.nodePathMap
+                | map(attribute='node') | sort | list
+                == local_path_provisioner_worker_hosts | sort
+              - >-
+                __local_path_provisioner_live_storage_class.metadata.annotations[
+                  __local_path_provisioner_default_class_annotation
+                ] == 'true'
+              - >-
+                __local_path_provisioner_live_storage_class.volumeBindingMode
+                == 'WaitForFirstConsumer'
+              - >-
+                __local_path_provisioner_live_storage_class.provisioner
+                == 'rancher.io/local-path'
+            fail_msg: >-
+              The live local-path-provisioner resources do not match the
+              ready, immutable-image, worker-only, default-StorageClass
+              contract.
+            quiet: true
+          delegate_to: localhost
+          run_once: true
+
+    - name: Report the active default StorageClass
+      ansible.builtin.debug:
+        msg: >-
+          local-path-provisioner {{ local_path_provisioner_version }} is ready.
+          StorageClass `local-path` is the default and provisions only on
+          {{ local_path_provisioner_worker_hosts | sort | join(', ') }} under
+          {{ local_path_provisioner_data_path }}.
+      when: not ansible_check_mode
+      run_once: true
+
+  always:
+    - name: Remove temporary local-path-provisioner manifests
+      ansible.builtin.file:
+        path: "{{ __local_path_provisioner_temp_dir.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      when:
+        - __local_path_provisioner_temp_dir is defined
+        - __local_path_provisioner_temp_dir.path is defined
+      changed_when: false

@@ -1,0 +1,22 @@
+---
+- name: Evaluate diff result for {{ local_path_provisioner_reconcile_state_case.name }}
+  ansible.builtin.include_role:
+    name: local_path_provisioner
+    tasks_from: reconcile_state
+    public: true
+  vars:
+    __local_path_provisioner_namespace_exists: >-
+      {{ local_path_provisioner_reconcile_state_case.namespace_exists }}
+    __local_path_provisioner_manifest_diff:
+      rc: "{{ local_path_provisioner_reconcile_state_case.rc }}"
+
+- name: Reconciliation decision must match for {{ local_path_provisioner_reconcile_state_case.name }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        __local_path_provisioner_needs_reconcile | bool
+        == local_path_provisioner_reconcile_state_case.expect_reconcile | bool
+    fail_msg: >-
+      {{ local_path_provisioner_reconcile_state_case.name }} produced the wrong
+      reconciliation decision.
+    quiet: true

@@ -1,0 +1,113 @@
+---
+- name: Select transform-sensitive fixture objects for {{ local_path_provisioner_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __local_path_provisioner_case_deployment: >-
+      {{ local_path_provisioner_source_fixture
+         | selectattr('kind', 'equalto', 'Deployment') | first }}
+    __local_path_provisioner_case_storage_class: >-
+      {{ local_path_provisioner_source_fixture
+         | selectattr('kind', 'equalto', 'StorageClass') | first }}
+    __local_path_provisioner_case_config_map: >-
+      {{ local_path_provisioner_source_fixture
+         | selectattr('kind', 'equalto', 'ConfigMap') | first }}
+
+- name: Build mutated fixture Deployment for {{ local_path_provisioner_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __local_path_provisioner_case_deployment_mutated: >-
+      {{ __local_path_provisioner_case_deployment | combine({
+           'spec': __local_path_provisioner_case_deployment.spec | combine({
+             'template': __local_path_provisioner_case_deployment.spec.template | combine({
+               'spec': __local_path_provisioner_case_deployment.spec.template.spec
+                 | combine({'containers': [
+                     (__local_path_provisioner_case_deployment.spec.template.spec.containers
+                      | first) | combine({
+                       'image': 'docker.io/rancher/local-path-provisioner:latest'
+                     })
+                   ]})
+             })
+           })
+         })
+         if local_path_provisioner_manifest_shape_case.mutation == 'deployment_image'
+         else __local_path_provisioner_case_deployment }}
+
+- name: Build mutated fixture StorageClass for {{ local_path_provisioner_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __local_path_provisioner_case_storage_class_mutated: >-
+      {{ __local_path_provisioner_case_storage_class
+         | combine({'volumeBindingMode': 'Immediate'})
+         if local_path_provisioner_manifest_shape_case.mutation == 'immediate_binding'
+         else __local_path_provisioner_case_storage_class }}
+
+- name: Build mutated fixture ConfigMap for {{ local_path_provisioner_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __local_path_provisioner_case_config_map_mutated: >-
+      {{ __local_path_provisioner_case_config_map | combine({
+           'data': __local_path_provisioner_case_config_map.data | combine(
+             {'config.json': '{"nodePathMap":[{"node":"DEFAULT_PATH_FOR_NON_LISTED_NODES","paths":["/srv/elsewhere"]}]}'}
+             if local_path_provisioner_manifest_shape_case.mutation == 'config_path'
+             else {'helperPod.yaml': __local_path_provisioner_case_config_map.data['helperPod.yaml']
+                   | replace('docker.io/library/busybox', 'docker.io/library/alpine')}
+             if local_path_provisioner_manifest_shape_case.mutation == 'helper_image'
+             else {}
+           )
+         }) }}
+
+- name: Reset mutated object list for {{ local_path_provisioner_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __local_path_provisioner_case_objects: []
+
+- name: Assemble mutated object list for {{ local_path_provisioner_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __local_path_provisioner_case_objects: >-
+      {{ __local_path_provisioner_case_objects
+         + ([]
+            if local_path_provisioner_manifest_shape_case.mutation == 'missing_config_map'
+               and item.kind == 'ConfigMap'
+            else [
+              __local_path_provisioner_case_deployment_mutated
+              if item.kind == 'Deployment'
+              else __local_path_provisioner_case_storage_class_mutated
+              if item.kind == 'StorageClass'
+              else __local_path_provisioner_case_config_map_mutated
+              if item.kind == 'ConfigMap'
+              else item
+            ]) }}
+  loop: "{{ local_path_provisioner_source_fixture }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+
+- name: Reset manifest-shape outcome for {{ local_path_provisioner_manifest_shape_case.name }}
+  ansible.builtin.set_fact:
+    __local_path_provisioner_manifest_shape_rejected: false
+
+- name: Exercise manifest preparation for {{ local_path_provisioner_manifest_shape_case.name }}
+  block:
+    - name: Run only the local-path-provisioner manifest-preparation tasks
+      ansible.builtin.include_role:
+        name: local_path_provisioner
+        tasks_from: prepare_manifest
+      vars:
+        local_path_provisioner_version: 0.0.37
+        local_path_provisioner_manifest_sha256: "{{ local_path_provisioner_validation_digest }}"
+        local_path_provisioner_image_sha256: "{{ local_path_provisioner_validation_digest }}"
+        local_path_provisioner_helper_image_version: 1.38.0
+        local_path_provisioner_helper_image_sha256: "{{ local_path_provisioner_validation_digest }}"
+        local_path_provisioner_data_path: "{{ local_path_provisioner_valid_data_path }}"
+        local_path_provisioner_hostpath_acknowledged: true
+        local_path_provisioner_kubeconfig: /tmp/local-path-provisioner-validation-kubeconfig
+        local_path_provisioner_cluster_hosts: "{{ local_path_provisioner_valid_cluster_hosts }}"
+        local_path_provisioner_worker_hosts: "{{ local_path_provisioner_valid_worker_hosts }}"
+        __local_path_provisioner_source_objects: "{{ __local_path_provisioner_case_objects }}"
+  rescue:
+    - name: Record that manifest preparation rejected this case
+      ansible.builtin.set_fact:
+        __local_path_provisioner_manifest_shape_rejected: true
+
+- name: Manifest preparation must fail closed for {{ local_path_provisioner_manifest_shape_case.name }}
+  ansible.builtin.assert:
+    that:
+      - __local_path_provisioner_manifest_shape_rejected | bool
+    fail_msg: >-
+      {{ local_path_provisioner_manifest_shape_case.name }} unexpectedly passed
+      the local-path-provisioner upstream-shape gate.
+    quiet: true
