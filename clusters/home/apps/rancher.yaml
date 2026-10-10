@@ -1,5 +1,6 @@
 # Rancher — web UI for browsing and operating the cluster.
-# Open https://192.168.178.243 (own MetalLB IP) or https://rancher.home.arpa.
+# Open https://rancher.homelab.rubylabs.co (Let's Encrypt cert via Traefik) or
+# https://192.168.178.243 (own MetalLB IP, Rancher's self-signed cert).
 #
 # Sync wave 1: needs cert-manager's CRDs (wave 0). Until they exist the chart
 # renders a warning instead of the Issuer, so the retry below covers a cold
@@ -39,7 +40,7 @@ spec:
     targetRevision: 2.15.2
     helm:
       valuesObject:
-        hostname: rancher.home.arpa
+        hostname: rancher.homelab.rubylabs.co
         replicas: 1
         image:
           tag: v2.15.2@sha256:0c3d8e5702555b2bfd2ec3fe7a6e5f95484a28fcb9787c498db3e5b0f62652ea
@@ -51,8 +52,8 @@ spec:
             tag: v0.8.2@sha256:1eeed72d4eda486de13403c4ae6e9d29a0842edc35d0f4a8fb7b0dab79d04be9
         # Its own LAN address, so the UI opens by IP with no DNS:
         # https://192.168.178.243 (Rancher's own self-signed cert on 443).
-        # `hostname` above stays the server URL Rancher records; the Ingress
-        # keeps the name route for when *.home.arpa resolves again.
+        # The trusted route is the Ingress below; this one stays as the
+        # no-DNS fallback.
         service:
           type: LoadBalancer
           annotations:
@@ -60,10 +61,14 @@ spec:
             metallb.io/loadBalancerIPs: 192.168.178.243
         ingress:
           ingressClassName: traefik
+          # source: secret = Rancher creates no Issuer of its own and serves
+          # whatever is in tls-rancher-ingress, which cert-manager fills from
+          # the annotation below.
+          extraAnnotations:
+            cert-manager.io/cluster-issuer: letsencrypt
           tls:
-            # Rancher-generated self-signed CA via cert-manager. Browsers warn
-            # until a trusted local CA exists (PROJECT-PLAN Phase 2.75).
-            source: rancher
+            source: secret
+            secretName: tls-rancher-ingress
         resources:
           requests:
             cpu: 250m

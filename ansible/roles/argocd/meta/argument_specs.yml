@@ -52,13 +52,16 @@ argument_specs:
         type: str
         required: false
       argocd_hostname:
-        description: Host name served by the Argo CD Ingress.
+        description:
+          - Host name served by the Argo CD Ingress, with a Let's Encrypt
+            certificate from the `letsencrypt` ClusterIssuer.
+          - Must be covered by the issuer's DNS zone and resolve to Traefik.
         type: str
-        required: false
+        required: true
       argocd_load_balancer_ip:
         description:
           - Fixed MetalLB address of the argocd-server LoadBalancer Service.
-          - Lets the UI open by IP (plain HTTP) without *.home.arpa DNS.
+          - Lets the UI open by IP (plain HTTP) without DNS.
         type: str
         required: true
       metallb_pool_name:

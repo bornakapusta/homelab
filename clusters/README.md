@@ -8,11 +8,16 @@ no credentials).
 
 ```
 clusters/home/apps/
-  cert-manager.yaml           wave 0  cert-manager    TLS for Rancher
-  rancher.yaml                wave 1  cattle-system   rancher.home.arpa
-  kube-prometheus-stack.yaml  wave 1  monitoring      grafana.home.arpa
+  cert-manager.yaml           wave 0  cert-manager    issues Let's Encrypt certs
+  cert-issuers.yaml           wave 1  cert-manager    ClusterIssuers (manifests/cert-issuers/)
+  rancher.yaml                wave 1  cattle-system   rancher.homelab.rubylabs.co
+  kube-prometheus-stack.yaml  wave 1  monitoring      grafana.homelab.rubylabs.co
   home-dns.yaml               -       home-dns        LAN DNS at 192.168.178.241
+clusters/home/manifests/      plain manifests an Application points at by path
 ```
+
+The root app is non-recursive, so `manifests/` is only deployed through an
+Application that names its subdirectory (like `cert-issuers.yaml`).
 
 Each file is one Argo CD `Application` that wraps an upstream **Helm chart**:
 
@@ -35,7 +40,7 @@ Argo CD renders the charts itself, so these releases do **not** show up in
 kubectl -n argocd get applications
 ```
 
-or in the UI at https://argocd.home.arpa. Never `helm install`/`helm upgrade`
+or in the UI at https://argocd.homelab.rubylabs.co. Never `helm install`/`helm upgrade`
 something Argo CD manages: two controllers would fight over the same objects.
 
 ## Adding an app
@@ -58,10 +63,15 @@ spec:
       valuesObject:
         image:
           digest: sha256:...               # key name depends on the chart
-        ingress:
+        ingress:                           # key names depend on the chart
           enabled: true
           className: traefik
-          hosts: [my-app.home.arpa]
+          annotations:
+            cert-manager.io/cluster-issuer: letsencrypt
+          hosts: [my-app.homelab.rubylabs.co]
+          tls:
+            - secretName: my-app-tls
+              hosts: [my-app.homelab.rubylabs.co]
   destination:
     server: https://kubernetes.default.svc
     namespace: my-app

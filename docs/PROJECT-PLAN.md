@@ -125,9 +125,9 @@ In one paragraph: your laptop runs **herdr** and reaches the cluster over **Tail
 
 ### Phase 2.75 — Hostname access (internal DNS + TLS)
 - [x] Serve `*.home.arpa` from **local DNS** → ingress MetalLB IP: standalone CoreDNS `home-dns` via Argo CD at `192.168.178.241`, advertised by the FRITZ!Box; nodes pinned to the router.
-- [ ] Install **cert-manager** for HTTPS (cert-manager is installed; a locally trusted CA/ClusterIssuer is not); optionally **ExternalDNS** to auto-create records from Ingress objects.
+- [x] **cert-manager** + Let's Encrypt for HTTPS: `letsencrypt` ClusterIssuer, Cloudflare DNS-01 on `rubylabs.co`; one public wildcard record `*.homelab.rubylabs.co → 192.168.178.240` (DNS only). Replaces the `home.arpa` names for the UIs: publicly trusted certs need a real domain, and the public record works on every device without local DNS.
 - [ ] Later: **Tailscale Split DNS** so the same names resolve remotely.
-- **Done:** `https://app.home.arpa` reaches an app by name with a locally trusted cert.
+- **Done:** `https://app.homelab.rubylabs.co` reaches an app by name with a publicly trusted cert.
 
 ### Phase 3 — Cluster hygiene
 - [ ] **etcd** snapshot save + rehearse a restore.

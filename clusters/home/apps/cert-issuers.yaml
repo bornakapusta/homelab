@@ -1,0 +1,34 @@
+# cert-issuers — the Let's Encrypt ClusterIssuers (plain manifests in
+# clusters/home/manifests/cert-issuers/, not a chart).
+#
+# Sync wave 1: needs cert-manager's CRDs (wave 0). The retry covers a cold
+# bootstrap where both appear in the same root sync.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-issuers
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/bornakapusta/homelab.git
+    targetRevision: main
+    path: clusters/home/manifests/cert-issuers
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m

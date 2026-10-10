@@ -276,6 +276,11 @@ argocd_root_repo_url: "https://github.com/bornakapusta/homelab.git"
 # http://192.168.178.242. Rancher (.243) and Grafana (.244) take theirs from
 # clusters/home/apps/; keep all three distinct from traefik_load_balancer_ip.
 argocd_load_balancer_ip: 192.168.178.242
+# The trusted name route: a public wildcard record *.homelab.rubylabs.co ->
+# traefik_load_balancer_ip (Cloudflare, DNS only) and a Let's Encrypt cert from
+# the `letsencrypt` ClusterIssuer (clusters/home/manifests/cert-issuers/).
+# Rancher and Grafana repeat the domain in clusters/home/apps/.
+argocd_hostname: argocd.homelab.rubylabs.co
 
 # base_packages moved to roles/base/defaults/main.yml — it is a property of the
 # base role, not a site setting. Override it here only if you need extras.

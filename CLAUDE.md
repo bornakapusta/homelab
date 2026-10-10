@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Infrastructure-as-code for a 3-node Kubernetes homelab (3× Dell OptiPlex 7050, Ubuntu 26.04 LTS "resolute"). Uses Ansible for machine provisioning and kubeadm for cluster bootstrap. **Ansible owns the machines, a small bootstrap platform layer, and Argo CD itself. Argo CD owns everything declared under `clusters/home/` (cert-manager, Rancher, kube-prometheus-stack). Two controllers must never reconcile the same object: moving an Ansible-owned component into Argo CD is one atomic change that adds the Application and deletes the role.**
+Infrastructure-as-code for a 3-node Kubernetes homelab (3× Dell OptiPlex 7050, Ubuntu 26.04 LTS "resolute"). Uses Ansible for machine provisioning and kubeadm for cluster bootstrap. **Ansible owns the machines, a small bootstrap platform layer, and Argo CD itself. Argo CD owns everything declared under `clusters/home/` (cert-manager and its issuers, Rancher, kube-prometheus-stack, home-dns). Two controllers must never reconcile the same object: moving an Ansible-owned component into Argo CD is one atomic change that adds the Application and deletes the role.**
 
 ## Commands
 
@@ -75,10 +75,13 @@ make cluster
 
 | App | Namespace | Notes |
 |---|---|---|
-| `cert-manager` | `cert-manager` | wave 0; issues Rancher's TLS cert |
-| `rancher` | `cattle-system` | wave 1; `rancher.home.arpa`; 2.15.x is the first line certified for k8s 1.36 |
-| `kube-prometheus-stack` | `monitoring` | wave 1; `grafana.home.arpa`; Prometheus hostNetwork on `monitoring_host` (node-3), 15d/15GB retention, Alertmanager off |
+| `cert-manager` | `cert-manager` | wave 0; issues the Let's Encrypt certs |
+| `cert-issuers` | `cert-manager` | wave 1; plain manifests in `clusters/home/manifests/cert-issuers/`: `letsencrypt` + `letsencrypt-staging` ClusterIssuers, Cloudflare DNS-01 on `rubylabs.co` |
+| `rancher` | `cattle-system` | wave 1; `rancher.homelab.rubylabs.co`; 2.15.x is the first line certified for k8s 1.36 |
+| `kube-prometheus-stack` | `monitoring` | wave 1; `grafana.homelab.rubylabs.co`; Prometheus hostNetwork on `monitoring_host` (node-3), 15d/15GB retention, Alertmanager off |
 | `home-dns` | `home-dns` | standalone CoreDNS on MetalLB `192.168.178.241`: `*.home.arpa → .240`, `k8s.home.arpa → .11`, rest → FRITZ!Box. The FRITZ!Box advertises it to DHCP clients, so it is a **whole-house dependency** |
+
+**UI names and TLS.** Every Ingress host is under `homelab.rubylabs.co`: one public Cloudflare record `*.homelab.rubylabs.co → 192.168.178.240` (DNS only) plus a per-Ingress Let's Encrypt cert via `cert-manager.io/cluster-issuer: letsencrypt`. The Cloudflare token lives only in Secret `cert-manager/cloudflare-api-token`, created by hand (README "Trusted TLS") — never in git. Traefik's CRD provider is off, so there is no default TLSStore; an Ingress without the annotation and a `tls:` block gets Traefik's self-signed cert.
 
 **Nodes never resolve through `home-dns`.** The `base` role pins each node's resolver to `node_dns_servers` (the router) via networkd drop-ins and ignores DHCP/RA DNS (`ansible-playbook site.yml --tags dns`). Otherwise a cold boot deadlocks: a node can't pull images through a DNS server that runs on itself.
 
@@ -102,7 +105,7 @@ Order in `site.yml` matters — see the note under `automation_user`.
 | `traefik` | digest-pinned Helm release, standard Ingress only, fixed MetalLB address |
 | `metrics_server` | checksum-pinned parsed manifest, digest-pinned image, worker-only current CPU/memory API |
 | `local_path_provisioner` | checksum-pinned manifest, digest-pinned images, workers-only default StorageClass |
-| `argocd` | digest-pinned Helm release, `argocd.home.arpa`, applies the `homelab-root` app-of-apps |
+| `argocd` | digest-pinned Helm release, `argocd.homelab.rubylabs.co`, applies the `homelab-root` app-of-apps |
 
 `automation_user` **must** run before `hardening`: the account has to exist and be
 listed in sshd's `AllowUsers` before `hardening` reloads sshd.
@@ -162,7 +165,7 @@ is a deliberate 4-step rollout documented in `group_vars/all.yml`.
 
 ## Not yet implemented
 
-Argo CD adoption of the Ansible-owned platform components, Alertmanager + ntfy alerts, trusted TLS (Phase 2.75), Tailscale split DNS, `images/` (agent sandbox image), HA control plane (kube-vip). See `docs/PROJECT-PLAN.md` for the roadmap.
+Argo CD adoption of the Ansible-owned platform components, Alertmanager + ntfy alerts, Tailscale access to the UIs, `images/` (agent sandbox image), HA control plane (kube-vip). See `docs/PROJECT-PLAN.md` for the roadmap.
 
 <!-- OPENWIKI:START -->
 

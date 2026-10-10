@@ -30,7 +30,7 @@
         argocd_root_app_name: >-
           {{ argocd_validation_case.root_app_name | default('homelab-root') }}
         argocd_hostname: >-
-          {{ argocd_validation_case.hostname | default('argocd.home.arpa') }}
+          {{ argocd_validation_case.hostname | default('argocd.homelab.rubylabs.co') }}
         argocd_ingress_class_name: >-
           {{ argocd_validation_case.ingress_class | default('traefik') }}
         argocd_root_repo_url: >-

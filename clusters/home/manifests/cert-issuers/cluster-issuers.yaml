@@ -1,0 +1,51 @@
+# Let's Encrypt issuers for *.homelab.rubylabs.co, solved by DNS-01 through
+# Cloudflare: cert-manager writes a TXT record, so nothing has to be reachable
+# from the internet. Ingresses opt in with the annotation
+#   cert-manager.io/cluster-issuer: letsencrypt
+#
+# The Cloudflare API token is NOT in git. Create it once, by hand (README:
+# "Trusted TLS"), as Secret cert-manager/cloudflare-api-token, key api-token.
+# Token scope: Zone:DNS:Edit + Zone:Zone:Read on rubylabs.co only.
+#
+# No ACME email: Let's Encrypt no longer sends expiry mail, and cert-manager
+# renews on its own 30 days before expiry.
+#
+# letsencrypt-staging issues untrusted certs with far higher rate limits; point
+# an Ingress at it while debugging a new issuance, then switch back.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-account-key
+    solvers:
+      - selector:
+          dnsZones:
+            - rubylabs.co
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - selector:
+          dnsZones:
+            - rubylabs.co
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token

@@ -7,20 +7,18 @@ bootstrap platform layer, and Argo CD itself. Argo CD owns everything declared
 under `clusters/home/` (cert-manager, Rancher, Prometheus/Grafana). The same
 object must never be reconciled by both at once.
 
-| UI | By IP (works everywhere on the LAN) | By name (needs `*.home.arpa` DNS) | Login |
+| UI | By name (trusted HTTPS) | By IP (no DNS) | Login |
 |---|---|---|---|
-| Argo CD | http://192.168.178.242 | https://argocd.home.arpa | `admin` + generated password ([how](#step-4--gitops-apps-rancher-grafana)) |
-| Rancher | https://192.168.178.243 | https://rancher.home.arpa | generated bootstrap password, then set your own |
-| Grafana | http://192.168.178.244 | https://grafana.home.arpa | `admin` + generated password |
+| Argo CD | https://argocd.homelab.rubylabs.co | http://192.168.178.242 | `admin` + generated password ([how](#step-4--gitops-apps-rancher-grafana)) |
+| Rancher | https://rancher.homelab.rubylabs.co | https://192.168.178.243 (self-signed) | generated bootstrap password, then set your own |
+| Grafana | https://grafana.homelab.rubylabs.co | http://192.168.178.244 | `admin` + generated password |
 
-Each UI has its own MetalLB address, so the IP links need no DNS at all.
-
-The name links go through Traefik at `192.168.178.240`. Names resolve through the
-cluster's own LAN DNS server, `home-dns` at `192.168.178.241`
-(`*.home.arpa → 192.168.178.240`, `k8s.home.arpa → 192.168.178.11`, everything
-else forwarded to the FRITZ!Box). Point the FRITZ!Box at it once and every
-device on the network resolves them — see [Local DNS](#local-dns). Certificates
-are self-signed for now, so expect a browser warning.
+The name links go through Traefik at `192.168.178.240` and carry **Let's Encrypt**
+certificates, so every browser trusts them with nothing to install. A public
+Cloudflare record `*.homelab.rubylabs.co → 192.168.178.240` makes them resolve
+on any device; the address is private, so they only open from the home LAN.
+See [Trusted TLS](#trusted-tls). The IP links are the fallback: each UI also has
+its own MetalLB address.
 
 ```
 autoinstall/   cloud-init file to install Ubuntu identically on every node
@@ -162,7 +160,8 @@ See [`clusters/README.md`](clusters/README.md) for the layout and an example.
 
 | App | What it gives you |
 |---|---|
-| `cert-manager` | issues Rancher's TLS certificate |
+| `cert-manager` | issues the Let's Encrypt certificates for `*.homelab.rubylabs.co` |
+| `cert-issuers` | the `letsencrypt` / `letsencrypt-staging` ClusterIssuers (Cloudflare DNS-01) |
 | `rancher` | web UI to browse and inspect the cluster |
 | `kube-prometheus-stack` | Prometheus + Grafana: CPU, memory, disk, network and temperatures per node, 15 days of history |
 | `home-dns` | the LAN's DNS server for `*.home.arpa` (CoreDNS at `192.168.178.241`) |
@@ -191,6 +190,45 @@ kubectl -n monitoring get secret kube-prometheus-stack-grafana \
 
 In Grafana, open **Dashboards → Node Exporter / Nodes** for per-server
 resources, or **Kubernetes / Compute Resources / Node** for per-pod usage.
+
+### Trusted TLS
+
+Each Ingress asks cert-manager for a certificate with the annotation
+`cert-manager.io/cluster-issuer: letsencrypt`. cert-manager proves ownership of
+`rubylabs.co` with a **DNS-01** challenge (a temporary TXT record written through
+the Cloudflare API), so nothing in the homelab is exposed to the internet.
+Certificates renew automatically 30 days before they expire.
+
+One-time setup, done by hand because it involves a secret:
+
+1. **Cloudflare API token** — dash.cloudflare.com → My Profile → API Tokens →
+   Create Token → "Edit zone DNS" template. Permissions **Zone · DNS · Edit**
+   and **Zone · Zone · Read**, Zone Resources **Include · Specific zone ·
+   rubylabs.co**. Store it in the cluster, never in git — in a normal terminal,
+   so the token stays out of shell history:
+
+   ```bash
+   read -rs "CF_TOKEN?Cloudflare API token: " && echo && \
+   kubectl --kubeconfig ansible/kubeconfig -n cert-manager \
+     create secret generic cloudflare-api-token --from-literal=api-token="$CF_TOKEN" && \
+   unset CF_TOKEN
+   ```
+
+2. **DNS record** — in the `rubylabs.co` zone: type `A`, name `*.homelab`,
+   content `192.168.178.240`, proxy status **DNS only** (grey cloud; Cloudflare
+   cannot proxy a private address).
+
+3. **FRITZ!Box DNS rebind protection** — the FRITZ!Box refuses public names that
+   answer with a private address. Allow this one: **Heimnetz → Netzwerk →
+   Netzwerkeinstellungen → DNS-Rebind-Schutz**, add `homelab.rubylabs.co`.
+   (Devices with a manually set DNS server, e.g. 8.8.8.8, don't need this.)
+
+Check issuance with `kubectl get certificates -A` (all `READY True`). A stuck one:
+`kubectl describe certificaterequest,order,challenge -A`. While debugging, point
+an Ingress at `letsencrypt-staging` to stay clear of Let's Encrypt's rate limits.
+
+Hostnames are public in Certificate Transparency logs (crt.sh), which is harmless:
+they resolve to a private address.
 
 ### Local DNS
 
@@ -253,7 +291,7 @@ matching digests before a bump. Rancher's chart caps the Kubernetes version
 
 ## Not included yet
 
-- Alertmanager + phone alerts (ntfy), trusted TLS for `*.home.arpa`, Tailscale split DNS
+- Alertmanager + phone alerts (ntfy), Tailscale access to the UIs from outside the house
 - Moving MetalLB, Traefik, local-path and Metrics Server from Ansible into Argo CD
 - Agent Sandbox
 - `images/rails-dev/` — the agent sandbox image
@@ -270,7 +308,8 @@ These come after you have a working cluster. See `PROJECT-PLAN.md` for the full 
 | Pods can't reach each other | ufw forward policy, or pod CIDR clashing with your LAN |
 | `kubectl top` is unavailable or misses a node | Inspect the Metrics APIService, Metrics Server logs, and kubelet reachability; see the role README |
 | Installer can't see the disk | BIOS `SATA Operation` set to RAID — change to **AHCI** |
-| `*.home.arpa` doesn't open in the browser | Device isn't using `home-dns` yet: check the FRITZ!Box setting, reconnect, `dig rancher.home.arpa @192.168.178.241`; or add the `make hosts` line |
+| `*.homelab.rubylabs.co` doesn't resolve | `dig +short rancher.homelab.rubylabs.co @1.1.1.1` should print `192.168.178.240`. If that works but the device fails, the FRITZ!Box rebind protection is blocking it ([Trusted TLS](#trusted-tls), step 3) |
+| Browser still warns on a `homelab.rubylabs.co` name | Certificate not issued yet: `kubectl get certificates -A`; check the `cloudflare-api-token` Secret exists in `cert-manager` |
 | Whole house can't resolve names | Cluster/`home-dns` down — clear the FRITZ!Box "Lokaler DNS-Server" field, reconnect, then fix the cluster |
 | An Argo CD app is `OutOfSync`/`Degraded` | `kubectl -n argocd get applications`, then open the app in the Argo CD UI for the failing resource |
 | Grafana shows "No data" | Prometheus targets: `kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090` → http://localhost:9090/targets |

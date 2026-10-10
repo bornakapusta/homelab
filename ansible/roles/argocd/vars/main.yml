@@ -74,16 +74,22 @@ __argocd_helm_values:
       tag: "{{ argocd_redis_version }}@sha256:{{ argocd_redis_image_sha256 }}"
   server:
     # Its own LAN address, so the UI opens by IP with no DNS
-    # (http://<argocd_load_balancer_ip>; TLS ends at Traefik only for the
-    # name route). The Ingress keeps argocd.home.arpa working.
+    # (http://<argocd_load_balancer_ip>). The trusted route is the Ingress.
     service:
       type: LoadBalancer
       annotations:
         metallb.io/address-pool: "{{ metallb_pool_name }}"
         metallb.io/loadBalancerIPs: "{{ argocd_load_balancer_ip }}"
+    # TLS ends at Traefik with a Let's Encrypt certificate that cert-manager
+    # writes into argocd-server-tls. The issuer is defined in git under
+    # clusters/home/manifests/cert-issuers/, so it can lag this release on a
+    # cold bootstrap; the Certificate simply waits for it.
     ingress:
       enabled: true
       ingressClassName: "{{ argocd_ingress_class_name }}"
+      annotations:
+        cert-manager.io/cluster-issuer: letsencrypt
+      tls: true
 
 # The single root Application (app-of-apps). It deliberately carries no
 # resources-finalizer: deleting the root must never cascade into deleting every

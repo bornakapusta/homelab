@@ -1,7 +1,8 @@
-# cert-manager — issues the TLS certificate Rancher serves behind Traefik.
+# cert-manager — issues the Let's Encrypt certificates Traefik serves for
+# *.homelab.rubylabs.co (issuers: clusters/home/manifests/cert-issuers/).
 #
-# Sync wave 0: Rancher's chart creates a cert-manager Issuer and Certificate,
-# so the CRDs must exist before the rancher Application renders.
+# Sync wave 0: the ClusterIssuers and every Ingress's Certificate are
+# cert-manager objects, so the CRDs must exist before wave 1 renders.
 #
 # Pins: the chart version is exact, and every image is selected by digest
 # (multi-arch index digest from `docker buildx imagetools inspect <image>`).

@@ -309,7 +309,7 @@
 - name: Report the Argo CD entry points
   ansible.builtin.debug:
     msg: >-
-      Argo CD {{ argocd_version }} is healthy at http://{{ argocd_hostname }}
+      Argo CD {{ argocd_version }} is healthy at https://{{ argocd_hostname }}
       and syncs {{ argocd_root_repo_url }} ({{ argocd_root_revision }}:
       {{ argocd_root_path }}). Read the initial admin password with: kubectl
       -n {{ __argocd_namespace }} get secret argocd-initial-admin-secret -o

@@ -26,8 +26,13 @@ Application and removes the Ansible role together.
   off.
 - The chart's CRDs (`Application`, `AppProject`, `ApplicationSet`). Helm keeps
   them on uninstall (`helm.sh/resource-policy: keep`).
-- A standard Ingress for `argocd.home.arpa` on the `traefik` IngressClass.
-  `argocd-server` runs with `server.insecure: true`; TLS terminates at Traefik.
+- A standard Ingress for `argocd_hostname` (`argocd.homelab.rubylabs.co`) on
+  the `traefik` IngressClass. TLS terminates at Traefik with a Let's Encrypt
+  certificate cert-manager writes into `argocd-server-tls`
+  (`cert-manager.io/cluster-issuer: letsencrypt`); `argocd-server` runs with
+  `server.insecure: true`.
+- A LoadBalancer Service at `argocd_load_balancer_ip` for plain-HTTP access by
+  IP without DNS.
 - `homelab-root`: an Application syncing `clusters/home/apps` from
   `argocd_root_repo_url` at `main`, with automated prune and self-heal. The
   repository is public, so no repository credential exists anywhere.
@@ -52,8 +57,8 @@ Ansible-installed components — keep chart versions exact, never ranges.
 ## Interface and idempotency
 
 `meta/argument_specs.yml` is the enforced interface. Pins and the repository
-URL live in `group_vars/all.yml`; names, host name and the root path have role
-defaults.
+URL, host name and LoadBalancer address live in `group_vars/all.yml`; release
+and Application names and the root path have role defaults.
 
 The role compares the deployed Helm chart, application version and complete
 user-supplied values with the desired dictionary. An unchanged run performs
@@ -70,8 +75,8 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
   -o jsonpath='{.data.password}' | base64 -d
 ```
 
-Change it, then delete that Secret. `argocd.home.arpa` must resolve to the
-Traefik address on your laptop (`make hosts`).
+Change it, then delete that Secret. Open https://argocd.homelab.rubylabs.co
+(public DNS points it at Traefik) or http://192.168.178.242.
 
 ## Rollback
 

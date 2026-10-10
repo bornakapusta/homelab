@@ -11,10 +11,6 @@ DOCKER_HOST_FROM_CTX := $(shell docker context inspect --format '{{.Endpoints.do
 # Read from the single sources of truth rather than duplicating them here.
 CP_ENDPOINT := $(shell awk '/^control_plane_endpoint:/{print $$2}' $(ANSIBLE_DIR)/group_vars/all.yml)
 CP_IP       := $(shell awk '/ansible_host=/{sub(/.*ansible_host=/, ""); print $$1; exit}' $(ANSIBLE_DIR)/inventory.ini)
-INGRESS_IP  := $(shell awk '/^traefik_load_balancer_ip:/{print $$2}' $(ANSIBLE_DIR)/group_vars/all.yml)
-# Ingress hostnames served by Traefik. Keep in sync with the Ingress hosts in
-# the argocd role and clusters/home/apps/ (rancher, kube-prometheus-stack).
-INGRESS_HOSTS := argocd.home.arpa rancher.home.arpa grafana.home.arpa
 
 ## install the Ansible collections the roles depend on
 deps:
@@ -113,11 +109,8 @@ hosts:
 	@echo ""
 	@echo "  echo '$(CP_IP) $(CP_ENDPOINT)' | sudo tee -a /etc/hosts"
 	@echo ""
-	@echo "The web UIs sit behind Traefik's MetalLB address. home-dns serves them to"
-	@echo "the whole LAN once the FRITZ!Box advertises 192.168.178.241 (README: Local"
-	@echo "DNS). Until then, or on a machine that doesn't use it, add them too:"
-	@echo ""
-	@echo "  echo '$(INGRESS_IP) $(INGRESS_HOSTS)' | sudo tee -a /etc/hosts"
+	@echo "The web UIs need no /etc/hosts entry: *.homelab.rubylabs.co is a public"
+	@echo "DNS record pointing at Traefik (README: Trusted TLS)."
 	@echo ""
 
 ## show cluster state using the fetched kubeconfig
