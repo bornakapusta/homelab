@@ -25,6 +25,23 @@ argument_specs:
           - Its ansible_host becomes the address side of the /etc/hosts entry.
         type: str
         required: true
+      node_dns_servers:
+        description:
+          - Resolvers the node itself uses (the LAN router), pinned per interface.
+          - >-
+            DHCP- and RA-supplied DNS is ignored, because the router advertises
+            the cluster-hosted home-dns to every client and a node must never
+            resolve through a DNS server that runs on itself.
+        type: list
+        elements: str
+        required: true
+      base_dns_pinned_interfaces:
+        description:
+          - Interfaces whose netplan-generated systemd-networkd config receives
+            the DNS pin drop-in.
+        type: list
+        elements: str
+        required: false
       base_packages:
         description:
           - Packages installed on every node. Each entry has a named consumer.

@@ -27,8 +27,8 @@ why the Kubernetes and containerd packages are pinned and held by the
 
 Declared and validated in [`meta/argument_specs.yml`](meta/argument_specs.yml).
 
-Required: `timezone`, `control_plane_endpoint`, `control_plane_host`.
-Optional: `base_packages`, `base_sensor_modules`.
+Required: `timezone`, `control_plane_endpoint`, `control_plane_host`, `node_dns_servers`.
+Optional: `base_packages`, `base_sensor_modules`, `base_dns_pinned_interfaces`.
 
 ## Hardware sensors
 
@@ -55,6 +55,25 @@ achievable on that hardware and `coretemp` is the wrong module for it —
 `dell-smm-hwmon` (possibly with `force=1`) is the next thing to try, but it is
 unreliable across Dell desktop models and is deliberately not a default.
 
+## Node DNS pin
+
+The FRITZ!Box hands every DHCP client the cluster-hosted `home-dns`
+(`192.168.178.241`, see `clusters/home/apps/home-dns.yaml`) so `*.home.arpa`
+resolves house-wide. The nodes must not follow it: a node resolving through a
+DNS server that runs on the cluster cannot pull images or reach apt after a cold
+boot.
+
+For each interface in `base_dns_pinned_interfaces` the role writes
+`/etc/systemd/network/10-netplan-<if>.network.d/50-dns-pin.conf`, a drop-in
+beside netplan's generated `.network` file that sets `DNS=` to
+`node_dns_servers` (the router) and turns off `UseDNS` for DHCPv4, DHCPv6 and
+router advertisements. It then runs `networkctl reload` (the DHCP lease is kept)
+and asserts `resolvectl dns <if>` lists only the pinned servers. Netplan YAML,
+which holds the WiFi credentials, is never touched.
+
+Verify on a node with `resolvectl dns` — every link should show `192.168.178.1`
+(and `tailscale0` its own `100.100.100.100`, which only answers tailnet names).
+
 ## Rollback
 
 No automatic rollback. Per-item recovery:
@@ -64,11 +83,13 @@ No automatic rollback. Per-item recovery:
 | Hostname | `sudo hostnamectl set-hostname <old>` |
 | `/etc/hosts` entries | Managed by `lineinfile`; edit or delete the line |
 | WiFi power-save unit | `sudo systemctl disable --now wifi-no-powersave.service` then delete `/etc/systemd/system/wifi-no-powersave.service` |
+| Node DNS pin | `sudo rm -r /etc/systemd/network/10-netplan-*.network.d` then `sudo networkctl reload` — DHCP-supplied DNS returns. Do this only after the FRITZ!Box no longer advertises `home-dns`. |
 | Hardware sensor modules | `sudo rm /etc/modules-load.d/sensors.conf` then `sudo modprobe -r coretemp`. The `modprobe -r` may fail with `Module coretemp is in use` if something is reading it — harmless, the file removal is what stops it loading at boot. |
 | `apt upgrade` | Not reversible in practice. Restore from a snapshot if you need the old package set. |
 
 Files this role **replaces** wholesale rather than edits:
-`/etc/systemd/system/wifi-no-powersave.service`, `/etc/modules-load.d/sensors.conf`.
+`/etc/systemd/system/wifi-no-powersave.service`, `/etc/modules-load.d/sensors.conf`,
+`/etc/systemd/network/10-netplan-*.network.d/50-dns-pin.conf`.
 Every file it writes carries an `Ansible managed` header.
 
 ## Usage

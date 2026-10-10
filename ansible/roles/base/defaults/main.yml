@@ -5,6 +5,7 @@
 # timezone: (required)
 # control_plane_endpoint: (required)
 # control_plane_host: (required)
+# node_dns_servers: (required)
 
 # THE authoritative base package list — group_vars/all.yml deliberately does not
 # duplicate it, because a duplicate there would silently win and edits here would
@@ -43,3 +44,11 @@ base_packages:
 # it per-site only after confirming it behaves on the actual hardware.
 base_sensor_modules:
   - coretemp
+
+# Interfaces whose netplan-generated networkd config gets the DNS pin drop-in.
+# Both NICs on these OptiPlexes: WiFi today, the onboard Ethernet once cabled.
+# Names are stable (netplan's set-name / predictable naming); a missing one is
+# harmless, because a drop-in for a .network file that does not exist is inert.
+base_dns_pinned_interfaces:
+  - enp0s31f6
+  - wlp2s0

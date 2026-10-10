@@ -88,6 +88,93 @@
     state: started
     daemon_reload: true
 
+# --- node DNS --------------------------------------------------------------
+# The FRITZ!Box advertises the cluster-hosted home-dns (192.168.178.241) to
+# every DHCP client so that *.home.arpa resolves house-wide. The nodes must not
+# follow: a node resolving through a DNS server that runs on the cluster cannot
+# pull images, reach apt, or bootstrap after a cold boot. Pin them to the router
+# and ignore whatever DHCP/RA advertises.
+#
+# A drop-in beside netplan's generated .network file (networkd reads drop-in
+# directories from /etc for units in /run) rather than editing netplan YAML,
+# which holds the WiFi credentials and differs per node. Backups are inert:
+# networkd only reads *.conf from a drop-in directory.
+- name: Create networkd drop-in directories for the DNS pin
+  tags: [dns]
+  ansible.builtin.file:
+    path: "/etc/systemd/network/10-netplan-{{ item }}.network.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ base_dns_pinned_interfaces }}"
+
+- name: Pin node DNS to the router and ignore DHCP/RA-supplied servers
+  tags: [dns]
+  ansible.builtin.copy:
+    dest: "/etc/systemd/network/10-netplan-{{ item }}.network.d/50-dns-pin.conf"
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+    content: |
+      {{ __base_managed_header }}
+      [Network]
+      {% for server in node_dns_servers %}
+      DNS={{ server }}
+      {% endfor %}
+
+      [DHCPv4]
+      UseDNS=false
+
+      [DHCPv6]
+      UseDNS=false
+
+      [IPv6AcceptRA]
+      UseDNS=false
+  loop: "{{ base_dns_pinned_interfaces }}"
+  register: __base_dns_pin
+
+# Plain task, not a handler: the verification below needs the reload to have
+# happened first, and a handler here would fire wherever kubernetes_node's
+# play-global flush_handlers puts it (see the note under hardware sensors).
+# `networkctl reload` re-reads configuration and reconfigures only the links
+# whose .network changed; the DHCP lease itself is kept.
+- name: Apply the DNS pin
+  tags: [dns]
+  ansible.builtin.command: networkctl reload
+  when: __base_dns_pin.results | selectattr('changed') | list | length > 0
+  changed_when: true
+
+- name: Read the resolver's per-link DNS servers
+  tags: [dns]
+  ansible.builtin.command:
+    argv: [resolvectl, dns, "{{ item }}"]
+  loop: "{{ base_dns_pinned_interfaces | intersect(ansible_facts.interfaces) }}"
+  register: __base_link_dns
+  changed_when: false
+  until: >-
+    (__base_link_dns.stdout.split(':', 1) | last).split()
+    | difference(node_dns_servers) | length == 0
+  retries: 10
+  delay: 2
+
+- name: Assert every link resolves only through the pinned servers
+  tags: [dns]
+  ansible.builtin.assert:
+    that:
+      - >-
+        (item.stdout.split(':', 1) | last).split()
+        | difference(node_dns_servers) | length == 0
+    fail_msg: >-
+      {{ item.item }} still uses DNS servers outside node_dns_servers
+      ({{ node_dns_servers | join(', ') }}): {{ item.stdout }}. A node resolving
+      through the cluster-hosted home-dns cannot recover from a cold boot.
+    quiet: true
+  loop: "{{ __base_link_dns.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
 # --- hardware sensors ------------------------------------------------------
 # Populate /sys/class/hwmon so temperatures are readable. This lives in `base`
 # rather than `kubernetes_node` on purpose: sensing the hardware is a property

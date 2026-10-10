@@ -70,6 +70,13 @@ cluster_hosts: "{{ groups['k8s_cluster'] | default([]) }}"
 # clusters/home/apps/kube-prometheus-stack.yaml — change both together.
 monitoring_host: node-3
 
+# The DNS servers the NODES themselves use, pinned by the base role. Always the
+# FRITZ!Box, never the cluster's own home-dns (192.168.178.241): the router
+# hands that address to every DHCP client, and a node resolving through a DNS
+# server that runs on itself cannot pull images or reach apt after a cold boot.
+node_dns_servers:
+  - 192.168.178.1
+
 # Tailscale is a management path only. The auth key is a one-time bootstrap
 # secret loaded explicitly from vars/tailscale.vault; it never belongs in
 # this plaintext file. Once a node is enrolled, normal runs need no auth key.
