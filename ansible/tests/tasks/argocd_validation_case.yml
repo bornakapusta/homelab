@@ -40,6 +40,8 @@
           {{ argocd_validation_case.revision | default('main') }}
         argocd_root_path: >-
           {{ argocd_validation_case.root_path | default('clusters/home/apps') }}
+        argocd_load_balancer_ip: >-
+          {{ argocd_validation_case.load_balancer_ip | default('192.168.178.242') }}
   rescue:
     - name: Record that the Argo CD safety gate rejected this case
       ansible.builtin.set_fact:

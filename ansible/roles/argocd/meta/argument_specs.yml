@@ -55,6 +55,16 @@ argument_specs:
         description: Host name served by the Argo CD Ingress.
         type: str
         required: false
+      argocd_load_balancer_ip:
+        description:
+          - Fixed MetalLB address of the argocd-server LoadBalancer Service.
+          - Lets the UI open by IP (plain HTTP) without *.home.arpa DNS.
+        type: str
+        required: true
+      metallb_pool_name:
+        description: MetalLB IPAddressPool requested by the argocd-server Service.
+        type: str
+        required: true
       argocd_ingress_class_name:
         description: IngressClass for the Argo CD UI.
         type: str

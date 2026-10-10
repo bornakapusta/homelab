@@ -29,10 +29,16 @@
       - argocd_root_revision is match('^[A-Za-z0-9][-A-Za-z0-9._/]*$')
       - argocd_root_path is match('^[A-Za-z0-9][-A-Za-z0-9._/]*[A-Za-z0-9]$')
       - "'..' not in argocd_root_path.split('/')"
+      - >-
+        argocd_load_balancer_ip is match(
+          '^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])$'
+        )
+      - argocd_load_balancer_ip != (traefik_load_balancer_ip | default(''))
     fail_msg: >-
       Argo CD's release pins or names are invalid, or the root Application
       source is not an anonymous HTTPS git URL with a relative path inside the
-      repository. Credentials never belong in argocd_root_repo_url.
+      repository, or argocd_load_balancer_ip is not an IPv4 address distinct
+      from Traefik's. Credentials never belong in argocd_root_repo_url.
     quiet: true
   delegate_to: localhost
   run_once: true

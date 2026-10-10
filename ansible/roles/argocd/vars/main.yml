@@ -73,6 +73,14 @@ __argocd_helm_values:
       repository: ecr-public.aws.com/docker/library/redis
       tag: "{{ argocd_redis_version }}@sha256:{{ argocd_redis_image_sha256 }}"
   server:
+    # Its own LAN address, so the UI opens by IP with no DNS
+    # (http://<argocd_load_balancer_ip>; TLS ends at Traefik only for the
+    # name route). The Ingress keeps argocd.home.arpa working.
+    service:
+      type: LoadBalancer
+      annotations:
+        metallb.io/address-pool: "{{ metallb_pool_name }}"
+        metallb.io/loadBalancerIPs: "{{ argocd_load_balancer_ip }}"
     ingress:
       enabled: true
       ingressClassName: "{{ argocd_ingress_class_name }}"

@@ -272,6 +272,10 @@ argocd_redis_version: "8.6.4-alpine"
 argocd_redis_image_sha256: "2cc044fc5a07c9b701f8f1255a309ae9ad7856e694ac03513bf3648c01e40763"
 # Public repository, so Argo CD reads it anonymously. Never embed credentials.
 argocd_root_repo_url: "https://github.com/bornakapusta/homelab.git"
+# The Argo CD UI's own MetalLB address, so it opens by IP with no DNS:
+# http://192.168.178.242. Rancher (.243) and Grafana (.244) take theirs from
+# clusters/home/apps/; keep all three distinct from traefik_load_balancer_ip.
+argocd_load_balancer_ip: 192.168.178.242
 
 # base_packages moved to roles/base/defaults/main.yml — it is a property of the
 # base role, not a site setting. Override it here only if you need extras.
