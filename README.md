@@ -13,9 +13,12 @@ object must never be reconciled by both at once.
 | Rancher | https://rancher.home.arpa | generated bootstrap password, then set your own |
 | Grafana | https://grafana.home.arpa | `admin` + generated password |
 
-All three sit behind Traefik at `192.168.178.240`. Run `make hosts` for the
-`/etc/hosts` line your laptop needs until local DNS serves `*.home.arpa`.
-Certificates are self-signed for now, so expect a browser warning.
+All three sit behind Traefik at `192.168.178.240`. Names resolve through the
+cluster's own LAN DNS server, `home-dns` at `192.168.178.241`
+(`*.home.arpa → 192.168.178.240`, `k8s.home.arpa → 192.168.178.11`, everything
+else forwarded to the FRITZ!Box). Point the FRITZ!Box at it once and every
+device on the network resolves them — see [Local DNS](#local-dns). Certificates
+are self-signed for now, so expect a browser warning.
 
 ```
 autoinstall/   cloud-init file to install Ubuntu identically on every node
@@ -160,6 +163,7 @@ See [`clusters/README.md`](clusters/README.md) for the layout and an example.
 | `cert-manager` | issues Rancher's TLS certificate |
 | `rancher` | web UI to browse and inspect the cluster |
 | `kube-prometheus-stack` | Prometheus + Grafana: CPU, memory, disk, network and temperatures per node, 15 days of history |
+| `home-dns` | the LAN's DNS server for `*.home.arpa` (CoreDNS at `192.168.178.241`) |
 
 Argo-managed charts are rendered by Argo CD, so they do **not** appear in
 `helm list`; check them with `kubectl -n argocd get applications` or the Argo CD
@@ -185,6 +189,25 @@ kubectl -n monitoring get secret kube-prometheus-stack-grafana \
 
 In Grafana, open **Dashboards → Node Exporter / Nodes** for per-server
 resources, or **Kubernetes / Compute Resources / Node** for per-pod usage.
+
+### Local DNS
+
+`home-dns` is a standalone CoreDNS (two replicas, one per worker) on the MetalLB
+address `192.168.178.241`. Its whole config is
+`clusters/home/apps/home-dns.yaml`. To make every device use it, set it once on
+the FRITZ!Box:
+
+> **Heimnetz → Netzwerk → Netzwerkeinstellungen → IPv4-Einstellungen →
+> Lokaler DNS-Server:** `192.168.178.241`
+
+Devices pick it up when their DHCP lease renews (reconnect WiFi to speed it up).
+Check from any device with `dig +short rancher.home.arpa` → `192.168.178.240`.
+Once that works, the `home.arpa` lines in your laptop's `/etc/hosts` can go.
+
+This makes the cluster a **whole-house dependency**: if it is down, devices
+can't resolve names at all. Emergency fallback: clear that FRITZ!Box field and
+reconnect. The **nodes never use `home-dns`** — the `base` role pins them to the
+router so a cold boot can't deadlock on its own DNS.
 
 **Treat Rancher as read-only** for anything Ansible or Argo CD manages. An edit
 made in its UI is either reverted by Argo CD's self-heal or silently drifts from
@@ -228,7 +251,7 @@ matching digests before a bump. Rancher's chart caps the Kubernetes version
 
 ## Not included yet
 
-- Alertmanager + phone alerts (ntfy), trusted TLS and local DNS for `*.home.arpa`
+- Alertmanager + phone alerts (ntfy), trusted TLS for `*.home.arpa`, Tailscale split DNS
 - Moving MetalLB, Traefik, local-path and Metrics Server from Ansible into Argo CD
 - Agent Sandbox
 - `images/rails-dev/` — the agent sandbox image
@@ -245,7 +268,8 @@ These come after you have a working cluster. See `PROJECT-PLAN.md` for the full 
 | Pods can't reach each other | ufw forward policy, or pod CIDR clashing with your LAN |
 | `kubectl top` is unavailable or misses a node | Inspect the Metrics APIService, Metrics Server logs, and kubelet reachability; see the role README |
 | Installer can't see the disk | BIOS `SATA Operation` set to RAID — change to **AHCI** |
-| `*.home.arpa` doesn't open in the browser | Missing `/etc/hosts` line — run `make hosts` |
+| `*.home.arpa` doesn't open in the browser | Device isn't using `home-dns` yet: check the FRITZ!Box setting, reconnect, `dig rancher.home.arpa @192.168.178.241`; or add the `make hosts` line |
+| Whole house can't resolve names | Cluster/`home-dns` down — clear the FRITZ!Box "Lokaler DNS-Server" field, reconnect, then fix the cluster |
 | An Argo CD app is `OutOfSync`/`Degraded` | `kubectl -n argocd get applications`, then open the app in the Argo CD UI for the failing resource |
 | Grafana shows "No data" | Prometheus targets: `kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090` → http://localhost:9090/targets |
 | A PVC stays `Pending` | Normal until a pod uses it (`WaitForFirstConsumer`); otherwise check `kubectl -n local-path-storage logs deploy/local-path-provisioner` |

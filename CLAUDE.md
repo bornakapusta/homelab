@@ -78,6 +78,9 @@ make cluster
 | `cert-manager` | `cert-manager` | wave 0; issues Rancher's TLS cert |
 | `rancher` | `cattle-system` | wave 1; `rancher.home.arpa`; 2.15.x is the first line certified for k8s 1.36 |
 | `kube-prometheus-stack` | `monitoring` | wave 1; `grafana.home.arpa`; Prometheus hostNetwork on `monitoring_host` (node-3), 15d/15GB retention, Alertmanager off |
+| `home-dns` | `home-dns` | standalone CoreDNS on MetalLB `192.168.178.241`: `*.home.arpa → .240`, `k8s.home.arpa → .11`, rest → FRITZ!Box. The FRITZ!Box advertises it to DHCP clients, so it is a **whole-house dependency** |
+
+**Nodes never resolve through `home-dns`.** The `base` role pins each node's resolver to `node_dns_servers` (the router) via networkd drop-ins and ignores DHCP/RA DNS (`ansible-playbook site.yml --tags dns`). Otherwise a cold boot deadlocks: a node can't pull images through a DNS server that runs on itself.
 
 **Rancher is read-only for anything Ansible or Argo CD owns.** Its UI can edit any object; such an edit is either reverted by selfHeal or silently drifts from git. Its bundled Fleet stays idle (no `GitRepo` objects). Initial passwords for Argo CD, Rancher and Grafana are generated in-cluster, never committed; each app/role README says how to read them.
 
@@ -159,7 +162,7 @@ is a deliberate 4-step rollout documented in `group_vars/all.yml`.
 
 ## Not yet implemented
 
-Argo CD adoption of the Ansible-owned platform components, Alertmanager + ntfy alerts, trusted TLS/local DNS (Phase 2.75), `images/` (agent sandbox image), HA control plane (kube-vip). See `docs/PROJECT-PLAN.md` for the roadmap.
+Argo CD adoption of the Ansible-owned platform components, Alertmanager + ntfy alerts, trusted TLS (Phase 2.75), Tailscale split DNS, `images/` (agent sandbox image), HA control plane (kube-vip). See `docs/PROJECT-PLAN.md` for the roadmap.
 
 <!-- OPENWIKI:START -->
 

@@ -124,8 +124,8 @@ In one paragraph: your laptop runs **herdr** and reaches the cluster over **Tail
 - **Done:** an app with a PVC is reachable via MetalLB + Ingress on the LAN.
 
 ### Phase 2.75 — Hostname access (internal DNS + TLS)
-- [ ] Serve `*.home.arpa` from **local DNS** (AdGuard Home/dnsmasq wildcard, or Pi-hole) → ingress MetalLB IP.
-- [ ] Install **cert-manager** for HTTPS; optionally **ExternalDNS** to auto-create records from Ingress objects.
+- [x] Serve `*.home.arpa` from **local DNS** → ingress MetalLB IP: standalone CoreDNS `home-dns` via Argo CD at `192.168.178.241`, advertised by the FRITZ!Box; nodes pinned to the router.
+- [ ] Install **cert-manager** for HTTPS (cert-manager is installed; a locally trusted CA/ClusterIssuer is not); optionally **ExternalDNS** to auto-create records from Ingress objects.
 - [ ] Later: **Tailscale Split DNS** so the same names resolve remotely.
 - **Done:** `https://app.home.arpa` reaches an app by name with a locally trusted cert.
 

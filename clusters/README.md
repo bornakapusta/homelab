@@ -11,6 +11,7 @@ clusters/home/apps/
   cert-manager.yaml           wave 0  cert-manager    TLS for Rancher
   rancher.yaml                wave 1  cattle-system   rancher.home.arpa
   kube-prometheus-stack.yaml  wave 1  monitoring      grafana.home.arpa
+  home-dns.yaml               -       home-dns        LAN DNS at 192.168.178.241
 ```
 
 Each file is one Argo CD `Application` that wraps an upstream **Helm chart**:

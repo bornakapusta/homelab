@@ -1,0 +1,112 @@
+# home-dns — the LAN's DNS server, so every device resolves *.home.arpa.
+#
+#   k8s.home.arpa     -> 192.168.178.11   (Kubernetes API, node-1)
+#   *.home.arpa       -> 192.168.178.240  (Traefik: argocd, rancher, grafana, ...)
+#   everything else   -> forwarded to the FRITZ!Box (192.168.178.1), so
+#                        fritz.box and local device names keep working
+#
+# A standalone CoreDNS (not the cluster's kube-system CoreDNS, which kubeadm
+# owns) on its own MetalLB address, 192.168.178.241, UDP+TCP 53. The FRITZ!Box
+# hands that address to DHCP clients (Heimnetz > Netzwerk > Netzwerkeinstellungen
+# > IPv4-Einstellungen > "Lokaler DNS-Server").
+#
+# WHOLE-HOUSE DEPENDENCY: once the FRITZ!Box points at this, every device's
+# name lookups go through the cluster. Two replicas are spread across the two
+# workers with a PodDisruptionBudget, so draining one node keeps DNS up. If the
+# cluster is down, clear the "Lokaler DNS-Server" field on the FRITZ!Box and
+# reconnect devices to fall back to the router's own DNS.
+#
+# The nodes do NOT use this server: the Ansible base role pins their resolver
+# to the FRITZ!Box and ignores DHCP-supplied DNS, so a node never depends on a
+# DNS server that runs on itself (cold boots, image pulls, apt).
+#
+# Why CoreDNS, not AdGuard/Pi-hole: its entire config is this file, so Argo CD
+# owns it outright; there is no UI-written state to drift from git.
+#
+# Pins: exact chart version; image by multi-arch index digest. The chart renders
+# "<repository>:<tag>", so the digest rides in the tag field.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: home-dns
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://coredns.github.io/helm
+    chart: coredns
+    targetRevision: 1.48.2
+    helm:
+      valuesObject:
+        image:
+          tag: 1.14.7@sha256:7efd3c635b03efd68c4e8398fc45f0d993d0e9ab016f72c1cefb0fd6d01aa286
+        # A normal app, not the cluster DNS service: no kube-dns labels, no
+        # Kubernetes API access.
+        isClusterService: false
+        rbac:
+          create: false
+        replicaCount: 2
+        topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/instance: home-dns
+        podDisruptionBudget:
+          minAvailable: 1
+        resources:
+          requests:
+            cpu: 20m
+            memory: 32Mi
+          limits:
+            memory: 128Mi
+        serviceType: LoadBalancer
+        service:
+          annotations:
+            metallb.io/address-pool: lan-pool
+            metallb.io/loadBalancerIPs: 192.168.178.241
+        servers:
+          - zones:
+              - zone: .
+                use_tcp: true
+            port: 53
+            plugins:
+              - name: errors
+              - name: health
+                configBlock: |-
+                  lameduck 10s
+              - name: ready
+              # Specific names first; hosts runs before template.
+              - name: hosts
+                configBlock: |-
+                  192.168.178.11 k8s.home.arpa
+                  fallthrough
+              # Wildcard: any other name under home.arpa is an Ingress host.
+              - name: template
+                parameters: IN A home.arpa
+                configBlock: |-
+                  answer "{{ .Name }} 60 IN A 192.168.178.240"
+              # No IPv6 for these names: answer AAAA with an empty NOERROR
+              # instead of forwarding it upstream and getting NXDOMAIN.
+              - name: template
+                parameters: IN AAAA home.arpa
+                configBlock: |-
+                  rcode NOERROR
+              - name: forward
+                parameters: . 192.168.178.1
+              - name: cache
+                parameters: 300
+              - name: loop
+              - name: reload
+              - name: loadbalance
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: home-dns
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
