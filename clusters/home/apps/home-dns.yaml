@@ -77,10 +77,16 @@ spec:
                 configBlock: |-
                   lameduck 10s
               - name: ready
-              # Specific names first; hosts runs before template.
-              - name: hosts
+              # Specific names first. They must be `template` blocks too:
+              # CoreDNS runs plugins in its compiled-in order, where template
+              # precedes hosts, so a hosts entry would be shadowed by the
+              # wildcard below. Template instances run in config order, and
+              # fallthrough passes non-matching names to the next one.
+              - name: template
+                parameters: IN A home.arpa
                 configBlock: |-
-                  192.168.178.11 k8s.home.arpa
+                  match ^k8s\.home\.arpa\.$
+                  answer "{{ .Name }} 60 IN A 192.168.178.11"
                   fallthrough
               # Wildcard: any other name under home.arpa is an Ingress host.
               - name: template
