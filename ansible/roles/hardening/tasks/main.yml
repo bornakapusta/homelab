@@ -101,6 +101,19 @@
     proto: tcp
   when: inventory_hostname == control_plane_host
 
+# Prometheus runs with hostNetwork on monitoring_host, so its scrapes leave from
+# that node's trusted LAN address and no kubelet/node-exporter port has to be
+# opened to the Pod network (same reasoning as metrics_server). The one cost:
+# Grafana, an ordinary Pod, reaches Prometheus at that host's address with its
+# Pod source IP, which lands in UFW's INPUT chain like the API rule above.
+- name: Allow the Pod network to reach Prometheus on the monitoring host
+  community.general.ufw:
+    rule: allow
+    src: "{{ pod_cidr }}"
+    port: "9090"
+    proto: tcp
+  when: inventory_hostname == monitoring_host
+
 - name: Allow SSH from approved networks
   community.general.ufw:
     rule: allow

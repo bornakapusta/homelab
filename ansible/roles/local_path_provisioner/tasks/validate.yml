@@ -1,0 +1,45 @@
+---
+# Controller-only validation is separate so make check can exercise all public
+# inputs without requiring a Kubernetes API server.
+
+- name: Validate local-path-provisioner pins, data path, and placement
+  ansible.builtin.assert:
+    that:
+      - local_path_provisioner_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+      - local_path_provisioner_manifest_sha256 is match('^[0-9a-f]{64}$')
+      - local_path_provisioner_image_sha256 is match('^[0-9a-f]{64}$')
+      - local_path_provisioner_helper_image_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+      - local_path_provisioner_helper_image_sha256 is match('^[0-9a-f]{64}$')
+      - local_path_provisioner_hostpath_acknowledged | bool
+      - local_path_provisioner_data_path is match('^(/[A-Za-z0-9._-]+)+$')
+      - local_path_provisioner_data_path is not match('^/tmp(/|$)')
+      - local_path_provisioner_data_path is not search('(^|/)\.\.?(/|$)')
+      - local_path_provisioner_kubeconfig | length > 0
+      - local_path_provisioner_cluster_hosts | length > 0
+      - >-
+        local_path_provisioner_cluster_hosts | unique | list | length
+        == local_path_provisioner_cluster_hosts | length
+      - local_path_provisioner_worker_hosts | length > 0
+      - >-
+        local_path_provisioner_worker_hosts | unique | list | length
+        == local_path_provisioner_worker_hosts | length
+      - >-
+        local_path_provisioner_worker_hosts
+        | difference(local_path_provisioner_cluster_hosts) | length == 0
+      - >-
+        local_path_provisioner_worker_hosts
+        | length < local_path_provisioner_cluster_hosts | length
+      - >-
+        local_path_provisioner_cluster_hosts
+        | reject('match', '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$')
+        | list | length == 0
+    fail_msg: >-
+      local-path-provisioner inputs are unsafe. Use exact semantic versions and
+      64-character lowercase SHA-256 values, an absolute data path that is not
+      / or under /tmp, unique inventory node lists whose workers are a strict
+      subset of the cluster (the control-plane node must never receive a PV),
+      and explicitly set local_path_provisioner_hostpath_acknowledged=true only
+      after reading the role's hostPath warning.
+    quiet: true
+  delegate_to: localhost
+  run_once: true

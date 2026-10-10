@@ -1,0 +1,164 @@
+---
+- name: Exercise Argo CD validation and release-state decisions
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    argocd_validation_digest: >-
+      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    argocd_validation_cases:
+      - name: valid defaults
+        expect_rejected: false
+      - name: tagged root revision
+        revision: v1.2.3
+        expect_rejected: false
+      - name: malformed chart version
+        chart_version: latest
+        expect_rejected: true
+      - name: malformed application version
+        app_version: v3.5.4
+        expect_rejected: true
+      - name: malformed chart digest
+        chart_digest: not-a-digest
+        expect_rejected: true
+      - name: malformed image digest
+        image_digest: not-a-digest
+        expect_rejected: true
+      - name: malformed Redis tag
+        redis_version: latest
+        expect_rejected: true
+      - name: malformed Redis digest
+        redis_digest: not-a-digest
+        expect_rejected: true
+      - name: invalid Helm release name
+        release_name: Bad_Name
+        expect_rejected: true
+      - name: overlong Helm release name
+        release_name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        expect_rejected: true
+      - name: invalid root Application name
+        root_app_name: Homelab_Root
+        expect_rejected: true
+      - name: invalid host name
+        hostname: argocd_home
+        expect_rejected: true
+      - name: single-label host name
+        hostname: argocd
+        expect_rejected: true
+      - name: invalid IngressClass name
+        ingress_class: Traefik
+        expect_rejected: true
+      - name: plain HTTP repository
+        repo_url: http://github.com/bornakapusta/homelab.git
+        expect_rejected: true
+      - name: SSH repository
+        repo_url: git@github.com:bornakapusta/homelab.git
+        expect_rejected: true
+      - name: credentials in repository URL
+        repo_url: https://token@github.com/bornakapusta/homelab.git
+        expect_rejected: true
+      - name: absolute root path
+        root_path: /clusters/home/apps
+        expect_rejected: true
+      - name: root path escaping the repository
+        root_path: clusters/../../etc
+        expect_rejected: true
+      - name: malformed root revision
+        revision: --upload-pack=x
+        expect_rejected: true
+    argocd_release_state_cases:
+      - name: exact current release
+        release:
+          app_version: v3.5.4
+          chart: argo-cd-10.10.2
+          status: deployed
+        current_values:
+          managed: true
+        expect_change: false
+      - name: release missing
+        expect_change: true
+      - name: release status failed
+        release:
+          app_version: v3.5.4
+          chart: argo-cd-10.10.2
+          status: failed
+        current_values:
+          managed: true
+        expect_change: true
+      - name: chart version drifted
+        release:
+          app_version: v3.5.4
+          chart: argo-cd-10.9.0
+          status: deployed
+        current_values:
+          managed: true
+        expect_change: true
+      - name: application version drifted
+        release:
+          app_version: v3.5.3
+          chart: argo-cd-10.10.2
+          status: deployed
+        current_values:
+          managed: true
+        expect_change: true
+      - name: user values drifted
+        release:
+          app_version: v3.5.4
+          chart: argo-cd-10.10.2
+          status: deployed
+        current_values:
+          managed: false
+        expect_change: true
+  tasks:
+    - name: Run each Argo CD validation case
+      ansible.builtin.include_tasks: tasks/argocd_validation_case.yml
+      loop: "{{ argocd_validation_cases }}"
+      loop_control:
+        loop_var: argocd_validation_case
+        label: "{{ argocd_validation_case.name }}"
+
+    # set_fact, not include_role vars: the assertion below renders the role's
+    # lazy vars after the include, when include-scoped vars no longer exist.
+    - name: Seed valid Argo CD operator inputs
+      ansible.builtin.set_fact:
+        argocd_chart_version: 10.10.2
+        argocd_chart_sha256: "{{ argocd_validation_digest }}"
+        argocd_version: 3.5.4
+        argocd_image_sha256: "{{ argocd_validation_digest }}"
+        argocd_redis_version: 8.6.4-alpine
+        argocd_redis_image_sha256: "{{ argocd_validation_digest }}"
+        argocd_root_repo_url: https://github.com/bornakapusta/homelab.git
+
+    - name: Load the managed Argo CD values with valid operator inputs
+      ansible.builtin.include_role:
+        name: argocd
+        tasks_from: validate
+        public: true
+
+    - name: Managed values and root Application must keep their safety properties
+      ansible.builtin.assert:
+        that:
+          - __argocd_helm_values.global.image.tag is search('@sha256:[0-9a-f]{64}$')
+          - __argocd_helm_values.redis.image.tag is search('@sha256:[0-9a-f]{64}$')
+          - __argocd_helm_values.configs.params['server.insecure'] == true
+          - __argocd_helm_values.dex.enabled == false
+          - __argocd_helm_values.server.ingress.ingressClassName == 'traefik'
+          - __argocd_image is search('@sha256:[0-9a-f]{64}$')
+          - __argocd_redis_image == 'ecr-public.aws.com/docker/library/redis:8.6.4-alpine@sha256:' ~ argocd_validation_digest
+          - __argocd_root_application.metadata.finalizers is not defined
+          - __argocd_root_application.spec.source.directory.recurse == false
+          - __argocd_root_application.spec.syncPolicy.automated.prune == true
+          - __argocd_root_application.spec.syncPolicy.automated.selfHeal == true
+          - __argocd_root_application.spec.source.path == 'clusters/home/apps'
+        fail_msg: >-
+          The managed Argo CD values or root Application lost a digest pin, the
+          Traefik TLS-termination setting, or the no-cascade-delete guarantee.
+        quiet: true
+
+    - name: Run each Argo CD release-state case
+      ansible.builtin.include_tasks: tasks/argocd_release_state_case.yml
+      loop: "{{ argocd_release_state_cases }}"
+      loop_control:
+        loop_var: argocd_release_state_case
+        label: "{{ argocd_release_state_case.name }}"

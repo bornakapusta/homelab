@@ -1,0 +1,55 @@
+---
+- name: Reset input-validation outcome for {{ local_path_provisioner_validation_case.name }}
+  ansible.builtin.set_fact:
+    __local_path_provisioner_validation_rejected: false
+
+- name: Exercise input validation for {{ local_path_provisioner_validation_case.name }}
+  block:
+    - name: Run only the local-path-provisioner validation tasks
+      ansible.builtin.include_role:
+        name: local_path_provisioner
+        tasks_from: validate
+      vars:
+        local_path_provisioner_version: >-
+          {{ local_path_provisioner_validation_case.version | default('0.0.37') }}
+        local_path_provisioner_manifest_sha256: >-
+          {{ local_path_provisioner_validation_case.manifest_digest
+             | default(local_path_provisioner_validation_digest) }}
+        local_path_provisioner_image_sha256: >-
+          {{ local_path_provisioner_validation_case.image_digest
+             | default(local_path_provisioner_validation_digest) }}
+        local_path_provisioner_helper_image_version: >-
+          {{ local_path_provisioner_validation_case.helper_version
+             | default('1.38.0') }}
+        local_path_provisioner_helper_image_sha256: >-
+          {{ local_path_provisioner_validation_case.helper_digest
+             | default(local_path_provisioner_validation_digest) }}
+        local_path_provisioner_hostpath_acknowledged: >-
+          {{ local_path_provisioner_validation_case.hostpath_acknowledged
+             | default(true) }}
+        local_path_provisioner_data_path: >-
+          {{ local_path_provisioner_validation_case.data_path
+             | default(local_path_provisioner_valid_data_path) }}
+        local_path_provisioner_kubeconfig: /tmp/local-path-provisioner-validation-kubeconfig
+        local_path_provisioner_cluster_hosts: >-
+          {{ local_path_provisioner_validation_case.cluster_nodes
+             | default(local_path_provisioner_valid_cluster_hosts) }}
+        local_path_provisioner_worker_hosts: >-
+          {{ local_path_provisioner_validation_case.worker_nodes
+             | default(local_path_provisioner_valid_worker_hosts) }}
+  rescue:
+    - name: Record that local-path-provisioner validation rejected this case
+      ansible.builtin.set_fact:
+        __local_path_provisioner_validation_rejected: true
+
+- name: Input-validation outcome must match the expected result
+  ansible.builtin.assert:
+    that:
+      - >-
+        __local_path_provisioner_validation_rejected | bool
+        == local_path_provisioner_validation_case.expect_rejected | bool
+    fail_msg: >-
+      {{ local_path_provisioner_validation_case.name }} was expected to be
+      {{ 'rejected' if local_path_provisioner_validation_case.expect_rejected else 'accepted' }},
+      but the local-path-provisioner input gate produced the opposite result.
+    quiet: true

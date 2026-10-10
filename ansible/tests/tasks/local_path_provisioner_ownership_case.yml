@@ -1,0 +1,29 @@
+---
+- name: Reset ownership outcome for {{ local_path_provisioner_ownership_case.name }}
+  ansible.builtin.set_fact:
+    __local_path_provisioner_ownership_rejected: false
+
+- name: Exercise ownership state for {{ local_path_provisioner_ownership_case.name }}
+  block:
+    - name: Run only the local-path-provisioner ownership tasks
+      ansible.builtin.include_role:
+        name: local_path_provisioner
+        tasks_from: ownership_state
+      vars:
+        __local_path_provisioner_existing_resources_raw:
+          results: "{{ local_path_provisioner_ownership_case.results }}"
+  rescue:
+    - name: Record that ownership evaluation rejected this case
+      ansible.builtin.set_fact:
+        __local_path_provisioner_ownership_rejected: true
+
+- name: Ownership outcome must match for {{ local_path_provisioner_ownership_case.name }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        __local_path_provisioner_ownership_rejected | bool
+        == local_path_provisioner_ownership_case.expect_rejected | bool
+    fail_msg: >-
+      {{ local_path_provisioner_ownership_case.name }} produced the wrong
+      ownership decision.
+    quiet: true

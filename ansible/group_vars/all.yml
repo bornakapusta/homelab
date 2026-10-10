@@ -62,6 +62,14 @@ control_plane_host: "{{ groups['control_plane'] | first }}"
 worker_hosts: "{{ groups['workers'] | default([]) }}"
 cluster_hosts: "{{ groups['k8s_cluster'] | default([]) }}"
 
+# The worker that runs Prometheus, Grafana and the Prometheus Operator. Never
+# the control plane: Prometheus TSDB compaction beside etcd's WAL causes fsync
+# stalls. Effectively permanent once chosen, because Prometheus' local-path
+# volume is bound to this node. Argo CD cannot read Ansible variables, so the
+# same name is repeated as a nodeSelector in
+# clusters/home/apps/kube-prometheus-stack.yaml — change both together.
+monitoring_host: node-3
+
 # Tailscale is a management path only. The auth key is a one-time bootstrap
 # secret loaded explicitly from vars/tailscale.vault; it never belongs in
 # this plaintext file. Once a node is enrolled, normal runs need no auth key.
@@ -210,6 +218,53 @@ metrics_server_image_sha256: "d9862115e7c7881280d3d75ca26bda8ffc0fc213315979575b
 # trusted-node first rung only. Replace it with signed kubelet certificates and
 # remove the APIService TLS skip before running untrusted sandbox workloads.
 metrics_server_kubelet_insecure_tls_acknowledged: true
+
+# --- storage ---------------------------------------------------------------
+# local-path-provisioner supplies the default StorageClass. Release, manifest
+# and both image indexes were verified on 2026-10-10. v0.0.37 uses only GA
+# APIs (core, rbac, apps, storage v1), so it is not tied to a Kubernetes minor.
+#   https://github.com/rancher/local-path-provisioner/releases
+local_path_provisioner_version: "0.0.37"
+# sha256 of the manifest at that tag (git tags are mutable; this pin is not):
+# https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.37/deploy/local-path-storage.yaml
+local_path_provisioner_manifest_sha256: "9781b39c24f3f651bd6d6e41b561e04e4904bbdb6d4f8c7a6009df3a702dcd65"
+# Multi-architecture OCI index digests reported by:
+#   docker buildx imagetools inspect docker.io/rancher/local-path-provisioner:v0.0.37
+#   docker buildx imagetools inspect docker.io/library/busybox:1.38.0
+local_path_provisioner_image_sha256: "e757967a5ec338f6a9b371c5a9688bedaa8c3578ea3dd4db329ea0084be0a86f"
+# Upstream ships the volume helper pod as bare, untagged busybox.
+local_path_provisioner_helper_image_version: "1.38.0"
+local_path_provisioner_helper_image_sha256: "fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
+
+# Where PVs are created on each worker. The workers have a single 100G root LV
+# (87G free when checked 2026-10-10; ~135G of the VG is still unallocated), so
+# this shares a filesystem with /var/lib/containerd. PVC sizes are NOT
+# enforced — Prometheus retentionSize and a disk alert are the real limits.
+local_path_provisioner_data_path: "/var/lib/local-path-provisioner"
+
+# The helper pod gets root hostPath write access to the data path above on
+# every worker — a deliberate exception to the hardening posture. Read the
+# role README before setting this.
+local_path_provisioner_hostpath_acknowledged: true
+
+# Argo CD is the GitOps controller for everything under clusters/home/. Ansible
+# owns the Argo CD release itself (it never manages its own installation).
+# Chart 10.10.2 ships Argo CD v3.5.4, tested upstream on Kubernetes 1.33–1.36.
+# Release metadata and digests were verified 2026-10-10.
+argocd_chart_version: "10.10.2"
+# OCI manifest digest reported by:
+#   helm pull oci://ghcr.io/argoproj/argo-helm/argo-cd --version 10.10.2
+argocd_chart_sha256: "96ff0d2150557ceb51c309c3adedb63455226c2dd2c5323f5b1e894536e2901d"
+argocd_version: "3.5.4"
+# Multi-architecture index digests reported by:
+#   docker buildx imagetools inspect quay.io/argoproj/argocd:v3.5.4
+#   docker buildx imagetools inspect ecr-public.aws.com/docker/library/redis:8.6.4-alpine
+# The Redis tag is the one the chart itself defaults to; bump it with the chart.
+argocd_image_sha256: "49dff79439bb38b1b942b19a113fe1fec7e6b6c671ddf9fe6a4a7c46bde0b77b"
+argocd_redis_version: "8.6.4-alpine"
+argocd_redis_image_sha256: "2cc044fc5a07c9b701f8f1255a309ae9ad7856e694ac03513bf3648c01e40763"
+# Public repository, so Argo CD reads it anonymously. Never embed credentials.
+argocd_root_repo_url: "https://github.com/bornakapusta/homelab.git"
 
 # base_packages moved to roles/base/defaults/main.yml — it is a property of the
 # base role, not a site setting. Override it here only if you need extras.

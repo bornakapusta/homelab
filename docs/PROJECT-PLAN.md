@@ -1,6 +1,6 @@
 # Homelab Agent-Cluster — Project Plan & Guidelines
 
-*Owner: Borna · Last updated: August 3, 2026*
+*Owner: Borna · Last updated: August 9, 2026*
 
 This is the master plan for building a 3-node Kubernetes homelab that hosts your own apps (GitOps) **and** runs AI coding agents in pre-warmed, disposable environments, all viewable through herdr.
 
@@ -19,6 +19,7 @@ It consolidates the decisions and rationale from three companion docs:
 3. **Host my own apps** on the same cluster, managed by GitOps.
 4. **Everything as code** — reproducible nodes and cluster from a git repo; never configure a machine by hand 3×.
 5. **Reachable and observable** — access from anywhere over Tailscale, with Grafana dashboards showing cluster health.
+6. **Learn and build a guarded DevOps agent** — use LangGraph to investigate alerts, create tasks, notify me, and later perform narrowly allowlisted remediation with human approval.
 
 ## 2. Definition of done (success criteria)
 
@@ -31,6 +32,7 @@ It consolidates the decisions and rationale from three companion docs:
 - [ ] Cluster reachable from outside the house over **Tailscale**.
 - [ ] At least one **hosted app** deployed via GitOps in its own namespace.
 - [ ] An **etcd snapshot** taken and a restore rehearsed once.
+- [ ] A **LangGraph DevOps agent** consumes a test alert, gathers read-only evidence, persists and resumes the incident, creates one deduplicated task, notifies me, and pauses for approval before any cluster mutation.
 
 ## 3. Decisions at a glance
 
@@ -51,6 +53,9 @@ It consolidates the decisions and rationale from three companion docs:
 | Agents | Claude Code + Codex (PI later) | Baked into the image |
 | Agent view | **herdr** on laptop | Multi-agent terminal dashboard |
 | Monitoring | **kube-prometheus-stack** (Grafana) | Standard; retention capped for small SSDs |
+| Cluster UI | **Rancher** 2.15.x via Argo CD (read-only for GitOps/Ansible-owned objects) | Browse/inspect the cluster; 2.15 is the first line certified for k8s 1.36 |
+| DevOps agent | **LangGraph 1.x** (`StateGraph`) + LangChain `create_agent`; LangSmith for redacted tracing and evaluation | Explicit state, durable execution, approval pauses, and testable control flow |
+| DevOps agent runtime | Learn locally → run as an event-driven service in an `operations` namespace; keep an external uptime check outside the cluster | The agent is available 24/7, while a total cluster outage can still be detected externally |
 | Scheduling | requests + metrics-server + topology spread → Descheduler → Trimaran | Distribute by load (real-usage later) |
 | Remote access | **Tailscale** mesh | No bridge box needed |
 | Decided out | **Talos migration — not doing it** (staying on Ubuntu + kubeadm) | Keep it simple; git makes it reproducible anyway |
@@ -68,7 +73,7 @@ It consolidates the decisions and rationale from three companion docs:
 
 *(Both diagrams are also embedded in `project-plan.html` for easy viewing.)*
 
-In one paragraph: your laptop runs **herdr** and reaches the cluster over **Tailscale**. The **kubeadm cluster** on the three OptiPlex boxes runs **Argo CD** (GitOps for everything), the **Agent Sandbox controller** maintaining a **warm pool** of pre-booted Rails+agent pods, your **hosted apps** in separate namespaces, and **Grafana/Prometheus** monitoring. To work, you issue a **SandboxClaim**, get a hot pod instantly, and herdr `kubectl exec`s into it to run Claude Code or Codex — watching each agent go working → done. When you're finished the pod is recycled and the pool refills.
+In one paragraph: your laptop runs **herdr** and reaches the cluster over **Tailscale**. The **kubeadm cluster** on the three OptiPlex boxes runs **Argo CD** (GitOps for everything), the **Agent Sandbox controller** maintaining a **warm pool** of pre-booted Rails+agent pods, your **hosted apps** in separate namespaces, and **Grafana/Prometheus** monitoring. Alertmanager invokes a separate **LangGraph DevOps agent** when something happens; the graph gathers evidence, records the incident, creates a task or notification, and pauses for approval before any mutation. It runs continuously as an in-cluster service after the learning phase, while a small external watchdog detects failures that take down the entire cluster or the agent itself. To work, you issue a **SandboxClaim**, get a hot pod instantly, and herdr `kubectl exec`s into it to run Claude Code or Codex — watching each agent go working → done. When you're finished the pod is recycled and the pool refills.
 
 ## 5. Guiding principles
 
@@ -144,6 +149,37 @@ In one paragraph: your laptop runs **herdr** and reaches the cluster over **Tail
   in the same change so two controllers never own it simultaneously.
 - **Done:** Grafana shows live metrics; a test alert fires.
 
+### Phase 3.75 — Learn LangGraph and build a guarded DevOps agent
+
+> Prometheus and Alertmanager detect problems; LangGraph coordinates the investigation. LangGraph is not the monitoring system and does not need to poll the servers continuously. Start locally with synthetic alerts, then deploy only after Phase 3.5 can fire a real test alert.
+
+**Learning ladder (in order):**
+
+- [ ] Learn the minimum Python foundations: typed functions, `TypedDict`, Pydantic models, async I/O, API calls, and unit tests.
+- [ ] Learn LLM foundations: messages, model calls, tool calling, structured output, and which decisions must remain deterministic code.
+- [ ] Build a graph with no LLM: typed state, nodes, normal and conditional edges, `START`, `END`, `compile()`, and `invoke()`.
+- [ ] Learn state updates and reducers, then routing, loops, parallel evidence collection, `Command`, and `Send`.
+- [ ] Add narrowly typed, read-only LangChain tools for Prometheus, Alertmanager, Kubernetes, and logs; use one agent node only where judgment is useful.
+- [ ] Learn durable execution: checkpoints, stable incident `thread_id`s, replay, a persistent production checkpointer, and the difference between thread state and cross-incident Store data.
+- [ ] Learn human-in-the-loop execution with `interrupt()` and resume commands; make every notification, task, and remediation idempotent before it can precede an interrupt.
+- [ ] Learn streaming and LangSmith: inspect graph state and tool calls in Studio, redact sensitive telemetry, trace incidents, and evaluate known incident fixtures.
+- [ ] Test individual nodes, routing, failures, resume behavior, duplicate delivery, and complete graphs with fake models and tools.
+- [ ] Learn production boundaries: timeouts, retries, budgets, recursion/tool-call limits, least-privilege RBAC, secrets, untrusted log content, audit records, and rollback.
+
+Use current LangGraph 1.x `StateGraph` primitives. For a standard tool-calling agent, use LangChain `create_agent`; do not base the learning path on the deprecated `langgraph.prebuilt.create_react_agent` API. Learn the Graph API first; postpone multi-agent designs, subgraphs, semantic memory, custom checkpointers, and the Functional API until the basic incident workflow is reliable.
+
+**Delivery ladder:**
+
+1. [ ] **Deterministic classifier** — accept a fake CPU alert and route it to ignore, notify, or investigate without using an LLM.
+2. [ ] **Read-only investigator** — collect metrics, pod state, events, and bounded logs in parallel; return a typed diagnosis with evidence and confidence.
+3. [ ] **Durable approval workflow** — survive a restart, create one deduplicated task, notify me, and pause before a proposed action. Choose the task system and notification channel before implementing their integrations.
+4. [ ] **Shadow mode** — receive real Alertmanager webhooks and compare diagnoses with human decisions, but grant no write permissions.
+5. [ ] **Guarded remediation** — only after shadow-mode evaluation passes, allow one reversible, explicitly approved action through an allowlisted tool and least-privilege service account; verify the result and escalate on failure.
+
+**24/7 runtime:** develop and test the graph on the laptop, then package it as a container and deploy it through Argo CD in an `operations` namespace. Alertmanager calls its webhook; a persistent checkpointer preserves incidents across pod restarts. Start with one replica unless the selected checkpointer and task-claiming design prove safe concurrency. Monitor this service from outside the cluster as well, because an agent running inside the cluster cannot report a total cluster or home-network outage.
+
+- **Done:** a real test alert completes the read-only path end to end; its trace contains no secrets; restarting the agent resumes rather than duplicates the incident; the chosen task and notification integrations each fire once; and every mutating tool remains blocked pending explicit approval.
+
 ### Phase 4 — Rails sandbox image
 - [ ] Dockerfile: `ruby:3.x` + node/yarn + git + postgres-client + Claude Code + Codex CLI; optional example Rails app pre-bundled.
 - [ ] Push to an in-cluster registry (TLS + auth) or GHCR.
@@ -190,6 +226,8 @@ homelab/
 │     └─ apps/         # your hosted apps
 ├─ images/
 │  └─ rails-dev/       # Dockerfile for the sandbox
+├─ agents/
+│  └─ devops/          # planned LangGraph incident investigator service
 └─ docs/               # these planning docs
 ```
 
@@ -212,6 +250,8 @@ homelab/
 | **Agent Sandbox is young** (API churn) | Fallback = plain Deployment of N dev pods as a manual warm pool |
 | **Runaway agent starves the cluster** | resource requests/limits + quotas; taint a node for agents |
 | **Secrets leak / token burn** | SOPS/Sealed Secrets; spend caps; skip-permissions only inside pods |
+| **DevOps agent makes an unsafe or repeated change** | Read-only first; typed allowlisted tools; least-privilege RBAC; idempotency keys; human approval; post-action verification and audit trail |
+| **Cluster outage also takes down its in-cluster agent** | Keep an independent external heartbeat/uptime check that can notify without depending on Kubernetes |
 | **Losing HA on a node failure** | Move to 3-CP + kube-vip once comfortable; etcd snapshots |
 | **Learning overload** | Follow the ladder; one phase at a time; each rung is usable |
 
@@ -236,6 +276,10 @@ homelab/
 - **taint/toleration** — keep pods off a node unless they explicitly tolerate it.
 - **GitOps / Argo CD** — cluster state lives in git; the controller makes reality match it.
 - **SandboxTemplate / WarmPool / Claim** — Agent Sandbox: env definition / pool of pre-booted pods / request for one.
+- **LangChain** — model, message, tool, structured-output, and standard agent building blocks.
+- **LangGraph** — the stateful workflow runtime: state carries an incident, nodes do work, and edges choose the next step.
+- **LangSmith** — development observability and evaluation for graph traces; it does not monitor the servers or replace Prometheus.
+- **Checkpointer / thread ID** — durable saved graph state / the stable identifier used to resume one incident.
 
 ## 12. Companion documents
 

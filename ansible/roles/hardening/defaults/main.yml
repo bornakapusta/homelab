@@ -10,6 +10,7 @@
 # kubernetes_api_allowed_from: (required) source networks for API port 6443
 # control_plane_host: (required) only this host receives the API rule
 # pod_cidr: (required) in-cluster clients allowed to reach API port 6443
+# monitoring_host: (required) node running hostNetwork Prometheus (port 9090)
 # tailscale_enabled: (required) whether tailnet-specific rules are active
 # tailscale_cidr: (required) canonical tailnet source range
 # tailscale_udp_port: (required) tailscaled direct-connection transport port

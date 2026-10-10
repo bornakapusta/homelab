@@ -1,0 +1,29 @@
+---
+- name: Seed release fixtures for {{ argocd_release_state_case.name }}
+  ansible.builtin.set_fact:
+    __argocd_releases_raw:
+      stdout: >-
+        {{ [argocd_release_state_case.release] | to_json
+           if argocd_release_state_case.release is defined else '[]' }}
+    __argocd_values_raw:
+      stdout: >-
+        {{ argocd_release_state_case.current_values | default({}) | to_json }}
+    __argocd_helm_values:
+      managed: true
+    argocd_chart_version: 10.10.2
+    argocd_version: 3.5.4
+
+- name: Compare fixture state for {{ argocd_release_state_case.name }}
+  ansible.builtin.include_tasks: ../../roles/argocd/tasks/release_state.yml
+
+- name: Reconciliation decision must match the expected result
+  ansible.builtin.assert:
+    that:
+      - >-
+        __argocd_needs_reconcile | bool
+        == argocd_release_state_case.expect_change | bool
+    fail_msg: >-
+      {{ argocd_release_state_case.name }} expected reconcile={{
+      argocd_release_state_case.expect_change }}, got {{
+      __argocd_needs_reconcile }}.
+    quiet: true

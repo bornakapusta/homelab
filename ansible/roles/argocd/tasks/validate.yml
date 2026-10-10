@@ -1,0 +1,38 @@
+---
+# Controller-only validation is separate so `make check` can exercise every
+# safety gate without requiring a live Kubernetes API server.
+
+- name: Validate Argo CD pins, names, and GitOps source
+  ansible.builtin.assert:
+    that:
+      - argocd_chart_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+      - argocd_chart_sha256 is match('^[0-9a-f]{64}$')
+      - argocd_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+      - argocd_image_sha256 is match('^[0-9a-f]{64}$')
+      - argocd_redis_version is match('^[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9]+)?$')
+      - argocd_redis_image_sha256 is match('^[0-9a-f]{64}$')
+      - argocd_release_name | length <= 53
+      - >-
+        argocd_release_name is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+      - argocd_root_app_name | length <= 63
+      - >-
+        argocd_root_app_name is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+      - argocd_ingress_class_name | length <= 63
+      - >-
+        argocd_ingress_class_name is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+      - argocd_hostname | length <= 253
+      - >-
+        argocd_hostname is match(
+          '^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+        )
+      - argocd_root_repo_url is match('^https://[^\s@]+\.git$')
+      - argocd_root_revision is match('^[A-Za-z0-9][-A-Za-z0-9._/]*$')
+      - argocd_root_path is match('^[A-Za-z0-9][-A-Za-z0-9._/]*[A-Za-z0-9]$')
+      - "'..' not in argocd_root_path.split('/')"
+    fail_msg: >-
+      Argo CD's release pins or names are invalid, or the root Application
+      source is not an anonymous HTTPS git URL with a relative path inside the
+      repository. Credentials never belong in argocd_root_repo_url.
+    quiet: true
+  delegate_to: localhost
+  run_once: true

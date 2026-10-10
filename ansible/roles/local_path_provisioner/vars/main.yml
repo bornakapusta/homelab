@@ -1,0 +1,113 @@
+---
+# Role constants. These describe the exact upstream object set and the narrow
+# homelab transformation applied before kubectl can inspect or reconcile it.
+
+__local_path_provisioner_namespace: local-path-storage
+__local_path_provisioner_storage_class: local-path
+
+# The project publishes no release asset for this manifest, so it is fetched at
+# the release tag. Git tags are mutable; the sha256 pin is what makes it exact.
+__local_path_provisioner_manifest_url: >-
+  https://raw.githubusercontent.com/rancher/local-path-provisioner/v{{ local_path_provisioner_version }}/deploy/local-path-storage.yaml
+
+__local_path_provisioner_upstream_image: >-
+  docker.io/rancher/local-path-provisioner:v{{ local_path_provisioner_version }}
+
+__local_path_provisioner_image: >-
+  {{ __local_path_provisioner_upstream_image }}@sha256:{{ local_path_provisioner_image_sha256 }}
+
+# Upstream ships the helper as bare, untagged busybox inside the ConfigMap.
+__local_path_provisioner_upstream_helper_image: docker.io/library/busybox
+
+__local_path_provisioner_helper_image: >-
+  docker.io/library/busybox:{{ local_path_provisioner_helper_image_version }}@sha256:{{ local_path_provisioner_helper_image_sha256 }}
+
+__local_path_provisioner_upstream_command:
+  - local-path-provisioner
+  - --debug
+  - start
+  - --config
+  - /etc/config/config.json
+
+__local_path_provisioner_upstream_default_path: /opt/local-path-provisioner
+
+__local_path_provisioner_owner_annotation: >-
+  homelab.home.arpa/local-path-provisioner-managed-by
+
+__local_path_provisioner_owner_value: ansible-local-path-provisioner
+
+__local_path_provisioner_manifest_annotation: >-
+  homelab.home.arpa/local-path-provisioner-manifest-sha256
+
+__local_path_provisioner_managed_annotations:
+  homelab.home.arpa/local-path-provisioner-managed-by: ansible-local-path-provisioner
+  homelab.home.arpa/local-path-provisioner-manifest-sha256: >-
+    {{ local_path_provisioner_manifest_sha256 }}
+
+__local_path_provisioner_template_annotations:
+  homelab.home.arpa/local-path-provisioner-manifest-sha256: >-
+    {{ local_path_provisioner_manifest_sha256 }}
+
+__local_path_provisioner_default_class_annotation: >-
+  storageclass.kubernetes.io/is-default-class
+
+# The pre-GA spelling is still honoured by the API server's defaulting
+# admission plugin, so the second-default check must look at both.
+__local_path_provisioner_beta_default_class_annotation: >-
+  storageclass.beta.kubernetes.io/is-default-class
+
+__local_path_provisioner_expected_resource_keys:
+  - v1|Namespace|_cluster|local-path-storage
+  - v1|ServiceAccount|local-path-storage|local-path-provisioner-service-account
+  - rbac.authorization.k8s.io/v1|Role|local-path-storage|local-path-provisioner-role
+  - rbac.authorization.k8s.io/v1|ClusterRole|_cluster|local-path-provisioner-role
+  - rbac.authorization.k8s.io/v1|RoleBinding|local-path-storage|local-path-provisioner-bind
+  - rbac.authorization.k8s.io/v1|ClusterRoleBinding|_cluster|local-path-provisioner-bind
+  - apps/v1|Deployment|local-path-storage|local-path-provisioner
+  - storage.k8s.io/v1|StorageClass|_cluster|local-path
+  - v1|ConfigMap|local-path-storage|local-path-config
+
+__local_path_provisioner_managed_resources:
+  - resource: namespaces
+    namespace: ""
+    name: local-path-storage
+  - resource: serviceaccounts
+    namespace: local-path-storage
+    name: local-path-provisioner-service-account
+  - resource: roles.rbac.authorization.k8s.io
+    namespace: local-path-storage
+    name: local-path-provisioner-role
+  - resource: clusterroles.rbac.authorization.k8s.io
+    namespace: ""
+    name: local-path-provisioner-role
+  - resource: rolebindings.rbac.authorization.k8s.io
+    namespace: local-path-storage
+    name: local-path-provisioner-bind
+  - resource: clusterrolebindings.rbac.authorization.k8s.io
+    namespace: ""
+    name: local-path-provisioner-bind
+  - resource: deployments.apps
+    namespace: local-path-storage
+    name: local-path-provisioner
+  - resource: storageclasses.storage.k8s.io
+    namespace: ""
+    name: local-path
+  - resource: configmaps
+    namespace: local-path-storage
+    name: local-path-config
+
+__local_path_provisioner_kubectl_argv:
+  - kubectl
+  - --request-timeout=30s
+  - --kubeconfig
+  - "{{ local_path_provisioner_kubeconfig }}"
+  - --server
+  - "https://{{ ansible_host }}:6443"
+
+__local_path_provisioner_kubectl_wait_argv:
+  - kubectl
+  - --request-timeout=210s
+  - --kubeconfig
+  - "{{ local_path_provisioner_kubeconfig }}"
+  - --server
+  - "https://{{ ansible_host }}:6443"

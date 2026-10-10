@@ -1,0 +1,3 @@
+---
+# Argo CD bootstrap role; local to this repository and not published to Galaxy.
+dependencies: []

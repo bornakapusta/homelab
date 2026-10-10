@@ -1,0 +1,103 @@
+---
+# Fixed implementation details. Keeping these in vars/ prevents an unrelated
+# inventory value from silently widening what the GitOps controller installs.
+
+__argocd_namespace: argocd
+
+__argocd_chart_ref: >-
+  oci://ghcr.io/argoproj/argo-helm/argo-cd@sha256:{{ argocd_chart_sha256 }}
+
+# Tag kept beside the digest so `kubectl get pods` stays readable; the digest
+# alone decides what the kubelet pulls.
+__argocd_image: >-
+  quay.io/argoproj/argocd:v{{ argocd_version }}@sha256:{{ argocd_image_sha256 }}
+
+__argocd_redis_image: >-
+  ecr-public.aws.com/docker/library/redis:{{ argocd_redis_version
+  }}@sha256:{{ argocd_redis_image_sha256 }}
+
+__argocd_managed_header: >-
+  {{ lookup('config', 'DEFAULT_MANAGED_STR') | comment }}
+
+__argocd_kubectl_argv:
+  - kubectl
+  - --request-timeout=30s
+  - --kubeconfig
+  - "{{ argocd_kubeconfig }}"
+  - --server
+  - "https://{{ ansible_host }}:6443"
+
+__argocd_kubectl_wait_argv:
+  - kubectl
+  - --request-timeout=310s
+  - --kubeconfig
+  - "{{ argocd_kubeconfig }}"
+  - --server
+  - "https://{{ ansible_host }}:6443"
+
+# Workloads waited on and checked after every reconcile.
+__argocd_workloads:
+  - deployment/{{ argocd_release_name }}-server
+  - deployment/{{ argocd_release_name }}-repo-server
+  - deployment/{{ argocd_release_name }}-redis
+  - statefulset/{{ argocd_release_name }}-application-controller
+
+# Exact user-supplied Helm values. The role compares this dictionary with
+# `helm get values`, so an unchanged run does not contact the OCI registry or
+# restart any controller.
+#
+# The chart renders every image as `<repository>:<tag>`, so the digest rides
+# in the tag field. ApplicationSet is scaled to zero rather than removed: the
+# chart has no switch for it, and its CRD stays available for later use.
+__argocd_helm_values:
+  fullnameOverride: "{{ argocd_release_name }}"
+  global:
+    domain: "{{ argocd_hostname }}"
+    image:
+      repository: quay.io/argoproj/argocd
+      tag: "v{{ argocd_version }}@sha256:{{ argocd_image_sha256 }}"
+      imagePullPolicy: IfNotPresent
+  configs:
+    params:
+      # TLS terminates at Traefik; argocd-server serves plain HTTP inside the
+      # cluster so the Ingress does not need a backend-protocol override.
+      server.insecure: true
+  applicationSet:
+    replicas: 0
+  dex:
+    enabled: false
+  notifications:
+    enabled: false
+  redis:
+    image:
+      repository: ecr-public.aws.com/docker/library/redis
+      tag: "{{ argocd_redis_version }}@sha256:{{ argocd_redis_image_sha256 }}"
+  server:
+    ingress:
+      enabled: true
+      ingressClassName: "{{ argocd_ingress_class_name }}"
+
+# The single root Application (app-of-apps). It deliberately carries no
+# resources-finalizer: deleting the root must never cascade into deleting every
+# child Application and the workloads they own.
+__argocd_root_application:
+  apiVersion: argoproj.io/v1alpha1
+  kind: Application
+  metadata:
+    name: "{{ argocd_root_app_name }}"
+    namespace: "{{ __argocd_namespace }}"
+  spec:
+    project: default
+    source:
+      repoURL: "{{ argocd_root_repo_url }}"
+      targetRevision: "{{ argocd_root_revision }}"
+      path: "{{ argocd_root_path }}"
+      directory:
+        recurse: false
+    destination:
+      server: https://kubernetes.default.svc
+      namespace: "{{ __argocd_namespace }}"
+    syncPolicy:
+      automated:
+        prune: true
+        selfHeal: true
