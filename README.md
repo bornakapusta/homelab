@@ -7,13 +7,15 @@ bootstrap platform layer, and Argo CD itself. Argo CD owns everything declared
 under `clusters/home/` (cert-manager, Rancher, Prometheus/Grafana). The same
 object must never be reconciled by both at once.
 
-| UI | URL | Login |
-|---|---|---|
-| Argo CD | https://argocd.home.arpa | `admin` + generated password ([how](#step-4--gitops-apps-rancher-grafana)) |
-| Rancher | https://rancher.home.arpa | generated bootstrap password, then set your own |
-| Grafana | https://grafana.home.arpa | `admin` + generated password |
+| UI | By IP (works everywhere on the LAN) | By name (needs `*.home.arpa` DNS) | Login |
+|---|---|---|---|
+| Argo CD | http://192.168.178.242 | https://argocd.home.arpa | `admin` + generated password ([how](#step-4--gitops-apps-rancher-grafana)) |
+| Rancher | https://192.168.178.243 | https://rancher.home.arpa | generated bootstrap password, then set your own |
+| Grafana | http://192.168.178.244 | https://grafana.home.arpa | `admin` + generated password |
 
-All three sit behind Traefik at `192.168.178.240`. Names resolve through the
+Each UI has its own MetalLB address, so the IP links need no DNS at all.
+
+The name links go through Traefik at `192.168.178.240`. Names resolve through the
 cluster's own LAN DNS server, `home-dns` at `192.168.178.241`
 (`*.home.arpa → 192.168.178.240`, `k8s.home.arpa → 192.168.178.11`, everything
 else forwarded to the FRITZ!Box). Point the FRITZ!Box at it once and every
