@@ -126,6 +126,19 @@
       10.244.0.0/16. This is baked in by `kubeadm init` — fix it now.
     quiet: true
 
+- name: Assert Prometheus is placed on a worker
+  ansible.builtin.assert:
+    that:
+      - monitoring_host is defined
+      - monitoring_host in worker_hosts
+    fail_msg: >-
+      monitoring_host is {{ monitoring_host | default('undefined') }}, which is not
+      in the workers group. Prometheus must never share the control plane's disk
+      with etcd, and the hardening role opens port 9090 to the Pod network only
+      on this host. Set it in group_vars/all.yml and in the nodeSelector of
+      clusters/home/apps/kube-prometheus-stack.yaml.
+    quiet: true
+
 # Checking `is defined` here would be a no-op: Ansible silently defaults
 # ansible_host to the inventory hostname, so it is ALWAYS defined. The real
 # requirement is that it is a literal IPv4 address — ufw `src` rules and the

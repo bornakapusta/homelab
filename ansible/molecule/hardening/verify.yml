@@ -16,6 +16,8 @@
       - 192.0.2.0/24
     pod_cidr: 10.244.0.0/16
     control_plane_host: molecule-hardening
+    # Same host, so converge also exercises the Prometheus pod-CIDR rule.
+    monitoring_host: molecule-hardening
     tailscale_enabled: true
     tailscale_cidr: 100.64.0.0/10
     tailscale_udp_port: 41641
@@ -137,6 +139,20 @@
         __kubernetes_api_rules: >-
           {{ verify_ufw_status.stdout_lines
              | select('match', '^6443/tcp\s+')
+             | list }}
+
+    - name: Grafana's Pod network must reach Prometheus on the monitoring host
+      ansible.builtin.assert:
+        that:
+          - __prometheus_rules | length == 1
+          - __prometheus_rules[0] is match('^9090/tcp\s+ALLOW IN\s+' ~ (pod_cidr | regex_escape) ~ '\s*$')
+        fail_msg: >-
+          UFW must contain exactly one TCP 9090 ALLOW IN rule, from {{ pod_cidr }}.
+        quiet: true
+      vars:
+        __prometheus_rules: >-
+          {{ verify_ufw_status.stdout_lines
+             | select('match', '^9090/tcp\s+')
              | list }}
 
     - name: Tailnet access must be SSH-only

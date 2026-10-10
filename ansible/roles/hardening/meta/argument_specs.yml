@@ -53,6 +53,13 @@ argument_specs:
           - Applied only to control_plane_host for in-cluster API clients such as CoreDNS.
         type: str
         required: true
+      monitoring_host:
+        description:
+          - Inventory hostname of the node running hostNetwork Prometheus.
+          - Only this host lets pod_cidr reach port 9090 (Grafana's datasource).
+          - Must match the nodeSelector in clusters/home/apps/kube-prometheus-stack.yaml.
+        type: str
+        required: true
       tailscale_enabled:
         description:
           - Whether to install tailnet-specific firewall rules.
